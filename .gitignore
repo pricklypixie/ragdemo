@@ -37,6 +37,7 @@ documents/
 .Trashes
 ehthumbs.db
 Thumbs.db
+.nova
 
 # Virtual Environment
 venv/
