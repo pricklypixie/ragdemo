@@ -21,17 +21,24 @@ A robust command-line Retrieval Augmented Generation (RAG) application that uses
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/rag-cli-app.git
-cd rag-cli-app
+git clone https://github.com/pricklypixie/ragdemo.git
+cd ragdemo
 ```
 
-2. Install dependencies:
+3. Create virtual environment
+
+```bash
+conda create -n ragdemo
+conda activate ragdemo
+```
+
+3. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Set up your Anthropic API key as an environment variable:
+4. Set up your Anthropic API key as an environment variable:
 
 ```bash
 # On Linux/macOS
