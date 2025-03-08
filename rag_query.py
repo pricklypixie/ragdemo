@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RAG Query Application with Project Support
+RAG Query Application with Project Support and Colorful Interface
 
 This application:
 1. Loads document indexes created by the document_indexer
@@ -8,6 +8,7 @@ This application:
 3. Retrieves relevant documents based on the query
 4. Sends the query and context to Claude for answering
 5. Supports on-demand indexing of projects
+6. Features a colorful terminal interface
 """
 
 import os
@@ -31,6 +32,25 @@ os.environ["MPS_FALLBACK_POLICY"] = "0"
 import anthropic
 from sklearn.metrics.pairwise import cosine_similarity
 
+# Import colorama for terminal colors
+try:
+	from colorama import init, Fore, Style
+	# Initialize colorama
+	init(autoreset=True)
+	COLORS_AVAILABLE = True
+except ImportError:
+	print("For a colorful interface, install colorama: pip install colorama")
+	# Create dummy color constants
+	class DummyFore:
+		def __getattr__(self, name):
+			return ""
+	class DummyStyle:
+		def __getattr__(self, name):
+			return ""
+	Fore = DummyFore()
+	Style = DummyStyle()
+	COLORS_AVAILABLE = False
+
 # Import our embedding library
 from embeddings import EmbeddingConfig, get_embedding_provider, load_project_config
 
@@ -44,6 +64,15 @@ DEFAULT_EMBEDDING_TYPE = "sentence_transformers"
 TOP_K_DOCUMENTS = 3
 API_TIMEOUT = 60  # Timeout for API calls in seconds
 MASTER_PROJECT = "master"  # Name for the master index
+
+# Color scheme
+QUERY_COLOR = Fore.GREEN
+ANSWER_COLOR = Fore.CYAN
+DEBUG_COLOR = Fore.YELLOW
+ERROR_COLOR = Fore.RED
+SYSTEM_COLOR = Fore.MAGENTA
+HIGHLIGHT_COLOR = Fore.WHITE + Style.BRIGHT
+RESET_COLOR = Style.RESET_ALL
 
 
 class APITimeoutError(Exception):
@@ -61,6 +90,21 @@ class Document:
 		self.content = content
 		self.metadata = metadata
 		self.embedding = embedding
+
+
+def print_debug(message: str) -> None:
+	"""Print debug message in debug color."""
+	print(f"{DEBUG_COLOR}[DEBUG] {message}{RESET_COLOR}")
+
+
+def print_error(message: str) -> None:
+	"""Print error message in error color."""
+	print(f"{ERROR_COLOR}Error: {message}{RESET_COLOR}")
+
+
+def print_system(message: str) -> None:
+	"""Print system message in system color."""
+	print(f"{SYSTEM_COLOR}{message}{RESET_COLOR}")
 
 
 def timeout_handler(signum, frame):
@@ -102,9 +146,9 @@ def save_embedding_config(project: str, document_dir: str, config: EmbeddingConf
 	# Save the config (without API key)
 	try:
 		config.save_to_file(config_path)
-		print(f"Saved embedding configuration to {config_path}")
+		print_system(f"Saved embedding configuration to {config_path}")
 	except Exception as e:
-		print(f"Error saving embedding configuration: {e}")
+		print_error(f"Error saving embedding configuration: {e}")
 
 
 def discover_projects(index_dir: str) -> List[str]:
@@ -125,7 +169,7 @@ def discover_projects(index_dir: str) -> List[str]:
 				if os.path.exists(os.path.join(item_path, "document_index.pkl")):
 					projects.append(item)
 	except Exception as e:
-		print(f"Error discovering projects: {e}")
+		print_error(f"Error discovering projects: {e}")
 	
 	return projects
 
@@ -135,21 +179,21 @@ def load_index(index_path: str, backup_dir: str, debug: bool = False) -> List[Do
 	try:
 		with open(index_path, 'rb') as f:
 			documents = pickle.load(f)
-		print(f"Loaded {len(documents)} documents from index: {index_path}")
+		print_system(f"Loaded {len(documents)} documents from index: {index_path}")
 		return documents
 	except Exception as e:
-		print(f"Error loading index: {e}")
+		print_error(f"Error loading index: {e}")
 		# Try to load from backup if main index fails
 		backup_files = sorted(glob.glob(os.path.join(backup_dir, "*.pkl")), reverse=True)
 		if backup_files:
-			print(f"Attempting to load from latest backup: {backup_files[0]}")
+			print_system(f"Attempting to load from latest backup: {backup_files[0]}")
 			try:
 				with open(backup_files[0], 'rb') as f:
 					documents = pickle.load(f)
-				print(f"Loaded {len(documents)} documents from backup")
+				print_system(f"Loaded {len(documents)} documents from backup")
 				return documents
 			except Exception as backup_error:
-				print(f"Error loading backup: {backup_error}")
+				print_error(f"Error loading backup: {backup_error}")
 		
 		return []
 
@@ -162,15 +206,15 @@ def get_project_embedding_config(project: str, document_dir: str, debug: bool = 
 		try:
 			config = EmbeddingConfig.from_json_file(config_path)
 			if debug:
-				print(f"[DEBUG] Loaded project embedding config from: {config_path}")
-				print(f"[DEBUG] Embedding type: {config.embedding_type}")
-				print(f"[DEBUG] Embedding model: {config.model_name}")
+				print_debug(f"Loaded project embedding config from: {config_path}")
+				print_debug(f"Embedding type: {config.embedding_type}")
+				print_debug(f"Embedding model: {config.model_name}")
 			return config
 		except Exception as e:
-			print(f"Error loading project config, using defaults: {e}")
+			print_error(f"Error loading project config, using defaults: {e}")
 	else:
 		if debug:
-			print(f"[DEBUG] No project config found at {config_path}, using defaults")
+			print_debug(f"No project config found at {config_path}, using defaults")
 	
 	# Use defaults if no config or loading failed
 	return EmbeddingConfig(
@@ -197,14 +241,14 @@ def index_project(project: str, document_dir: str, index_dir: str,
 			model_name=DEFAULT_EMBEDDING_MODEL
 		)
 		save_embedding_config(project, document_dir, default_config)
-		print(f"Created default embedding configuration at {config_path}")
+		print_system(f"Created default embedding configuration at {config_path}")
 	
 	# Get the embedding config for the project
 	config = get_project_embedding_config(project, document_dir, debug)
 	
 	# Check for document_indexer.py
 	if not os.path.exists("document_indexer.py"):
-		print("Error: document_indexer.py not found")
+		print_error("document_indexer.py not found")
 		return False
 	
 	# Build the command
@@ -222,16 +266,16 @@ def index_project(project: str, document_dir: str, index_dir: str,
 	
 	if debug:
 		cmd.append("--debug")
-		print(f"[DEBUG] Running indexer with command: {' '.join(cmd)}")
+		print_debug(f"Running indexer with command: {' '.join(cmd)}")
 	
 	# Run the indexer
-	print(f"Indexing project '{project}'...")
+	print_system(f"Indexing project '{project}'...")
 	try:
 		result = subprocess.run(cmd, check=True)
-		print(f"Indexing complete for project '{project}'")
+		print_system(f"Indexing complete for project '{project}'")
 		return True
 	except subprocess.CalledProcessError as e:
-		print(f"Error indexing project: {e}")
+		print_error(f"Error indexing project: {e}")
 		return False
 
 
@@ -240,11 +284,11 @@ def search_documents(query: str, documents: List[Document], project: str,
 					 top_k: int = TOP_K_DOCUMENTS, debug: bool = False) -> List[Document]:
 	"""Search for documents relevant to the query."""
 	if not documents:
-		print("No documents in index")
+		print_system("No documents in index")
 		return []
 	
 	if debug:
-		print(f"[DEBUG] Searching for: '{query}'")
+		print_debug(f"Searching for: '{query}'")
 	
 	# Group documents by embedding model/type
 	document_groups = {}
@@ -284,8 +328,8 @@ def search_documents(query: str, documents: List[Document], project: str,
 			search_time = time.time() - start_time
 			
 			if debug:
-				print(f"[DEBUG] Created query embedding in {search_time:.2f} seconds")
-				print(f"[DEBUG] Searching {len(document_groups[base_key])} documents with matching embedding model")
+				print_debug(f"Created query embedding in {search_time:.2f} seconds")
+				print_debug(f"Searching {len(document_groups[base_key])} documents with matching embedding model")
 			
 			# Calculate similarities for the base model group
 			base_similarities = []
@@ -302,7 +346,7 @@ def search_documents(query: str, documents: List[Document], project: str,
 			
 			# If we don't have enough results and there are other embedding types
 			if len(base_similarities) < top_k and len(document_groups) > 1:
-				print(f"Searching documents with different embedding models...")
+				print_system(f"Searching documents with different embedding models...")
 				
 				# For each different embedding type, we need a new provider
 				for key, docs in document_groups.items():
@@ -311,7 +355,7 @@ def search_documents(query: str, documents: List[Document], project: str,
 					
 					embedding_type, model_name = key
 					if debug:
-						print(f"[DEBUG] Searching {len(docs)} documents with embedding type: {embedding_type}, model: {model_name}")
+						print_debug(f"Searching {len(docs)} documents with embedding type: {embedding_type}, model: {model_name}")
 					
 					# Create a temporary provider for this embedding type
 					temp_config = EmbeddingConfig(embedding_type=embedding_type, model_name=model_name)
@@ -323,7 +367,7 @@ def search_documents(query: str, documents: List[Document], project: str,
 					search_time = time.time() - start_time
 					
 					if debug:
-						print(f"[DEBUG] Created query embedding with {model_name} in {search_time:.2f} seconds")
+						print_debug(f"Created query embedding with {model_name} in {search_time:.2f} seconds")
 					
 					# Calculate similarities
 					other_similarities = []
@@ -343,7 +387,7 @@ def search_documents(query: str, documents: List[Document], project: str,
 		
 		# In debug mode, print details about the relevant documents
 		if debug:
-			print(f"[DEBUG] Found {len(top_results)} relevant documents:")
+			print_debug(f"Found {len(top_results)} relevant documents:")
 			for i, (doc, sim) in enumerate(sorted_results[:top_k]):
 				proj = doc.metadata.get('project', MASTER_PROJECT)
 				file_path = doc.metadata.get('file_path', 'unknown')
@@ -352,19 +396,19 @@ def search_documents(query: str, documents: List[Document], project: str,
 				total_chunks = doc.metadata.get('total_chunks', 0)
 				emb_model = doc.metadata.get('embedding_model', 'unknown')
 				
-				print(f"[DEBUG] Document {i+1}:")
-				print(f"[DEBUG]   Score: {sim:.4f}")
-				print(f"[DEBUG]   Project: {proj}")
-				print(f"[DEBUG]   File: {file_path}")
-				print(f"[DEBUG]   Chunk: {chunk_index+1}/{total_chunks}")
-				print(f"[DEBUG]   Embedding Model: {emb_model}")
-				print(f"[DEBUG]   Content Preview: {doc.content[:100]}...")
+				print_debug(f"Document {i+1}:")
+				print_debug(f"  Score: {sim:.4f}")
+				print_debug(f"  Project: {proj}")
+				print_debug(f"  File: {file_path}")
+				print_debug(f"  Chunk: {chunk_index+1}/{total_chunks}")
+				print_debug(f"  Embedding Model: {emb_model}")
+				print_debug(f"  Content Preview: {doc.content[:100]}...")
 				print()
 		
 		return top_results
 		
 	except Exception as e:
-		print(f"Error during search: {e}")
+		print_error(f"Error during search: {e}")
 		if debug:
 			print(traceback.format_exc())
 		return []
@@ -424,7 +468,7 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 			"""
 		
 		if debug:
-			print("[DEBUG] Sending prompt to Claude")
+			print_debug("Sending prompt to Claude")
 		
 		# Set up timeout
 		signal.signal(signal.SIGALRM, timeout_handler)
@@ -445,7 +489,7 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 		
 		elapsed_time = time.time() - start_time
 		if debug:
-			print(f"[DEBUG] Received response from Claude in {elapsed_time:.2f} seconds")
+			print_debug(f"Received response from Claude in {elapsed_time:.2f} seconds")
 		
 		return response.content[0].text
 		
@@ -460,17 +504,23 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 		signal.alarm(0)
 
 
+def is_command(text: str) -> bool:
+	"""Check if the input is a command rather than a question."""
+	command_prefixes = ["project ", "projects", "config", "index", "exit", "quit"]
+	return any(text.lower() == cmd or text.lower().startswith(cmd) for cmd in command_prefixes)
+
+
 def interactive_mode(documents: List[Document], api_key: str, project: str, 
 					document_dir: str, index_dir: str, 
 					embedding_config: Optional[EmbeddingConfig] = None,
 					debug: bool = False) -> None:
 	"""Run the application in interactive mode."""
-	print(f"RAG Query Application - Interactive Mode (Project: {project})")
-	print("Enter 'exit' or 'quit' to end the session")
-	print("Enter 'project <name>' to switch projects")
-	print("Enter 'projects' to list available projects")
-	print("Enter 'index' to re-index the current project")
-	print("Enter 'config' to show current embedding configuration")
+	print_system(f"RAG Query Application - Interactive Mode (Project: {HIGHLIGHT_COLOR}{project}{RESET_COLOR}{SYSTEM_COLOR})")
+	print_system("Enter 'exit' or 'quit' to end the session")
+	print_system("Enter 'project <name>' to switch projects")
+	print_system("Enter 'projects' to list available projects")
+	print_system("Enter 'index' to re-index the current project")
+	print_system("Enter 'config' to show current embedding configuration")
 	
 	current_project = project
 	current_documents = documents
@@ -478,40 +528,42 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	
 	while True:
 		try:
-			query = input("\nEnter your question: ").strip()
-			
-			if query.lower() in ['exit', 'quit']:
-				print("Exiting...")
-				break
+			# Print the prompt with the current project highlighted
+			prompt = f"\n{QUERY_COLOR}Enter your question [{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{QUERY_COLOR}]: {RESET_COLOR}"
+			query = input(prompt).strip()
 			
 			if not query:
 				continue
 			
+			if query.lower() in ['exit', 'quit']:
+				print_system("Exiting...")
+				break
+			
 			# Handle special commands
 			if query.lower() == 'projects':
 				projects = discover_projects(index_dir)
-				print("\nAvailable Projects:")
+				print_system("\nAvailable Projects:")
 				for p in projects:
 					marker = "*" if p == current_project else " "
-					print(f"{marker} {p}")
+					print_system(f"{marker} {HIGHLIGHT_COLOR}{p}{RESET_COLOR}")
 				continue
 			
 			elif query.lower() == 'config':
-				print("\nCurrent Embedding Configuration:")
-				print(f"Project: {current_project}")
-				print(f"Embedding Type: {current_embedding_config.embedding_type}")
-				print(f"Embedding Model: {current_embedding_config.model_name}")
+				print_system("\nCurrent Embedding Configuration:")
+				print_system(f"Project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
+				print_system(f"Embedding Type: {current_embedding_config.embedding_type}")
+				print_system(f"Embedding Model: {current_embedding_config.model_name}")
 				
 				# Show config file path
 				config_path = get_project_config_path(current_project, document_dir)
 				if os.path.exists(config_path):
-					print(f"Config File: {config_path}")
+					print_system(f"Config File: {config_path}")
 				else:
-					print("Config File: Not found (using defaults)")
+					print_system("Config File: Not found (using defaults)")
 				continue
 			
 			elif query.lower() == 'index':
-				print(f"\nIndexing project: {current_project}")
+				print_system(f"\nIndexing project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
 				success = index_project(current_project, document_dir, index_dir, debug)
 				
 				if success:
@@ -522,8 +574,8 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 					# Reload the embedding config
 					current_embedding_config = get_project_embedding_config(current_project, document_dir, debug)
 					
-					print(f"Project '{current_project}' re-indexed successfully")
-					print(f"Loaded {len(current_documents)} documents")
+					print_system(f"Project '{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{SYSTEM_COLOR}' re-indexed successfully")
+					print_system(f"Loaded {len(current_documents)} documents")
 				continue
 			
 			elif query.lower().startswith('project '):
@@ -531,15 +583,15 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				index_path, backup_dir = get_index_path(index_dir, new_project)
 				
 				if not os.path.exists(index_path):
-					print(f"Project '{new_project}' not found or not indexed")
+					print_system(f"Project '{HIGHLIGHT_COLOR}{new_project}{RESET_COLOR}{SYSTEM_COLOR}' not found or not indexed")
 					# Ask if user wants to create it
-					create = input(f"Would you like to create and index project '{new_project}'? (y/n): ").strip().lower()
+					create = input(f"{SYSTEM_COLOR}Would you like to create and index project '{HIGHLIGHT_COLOR}{new_project}{RESET_COLOR}{SYSTEM_COLOR}'? (y/n): {RESET_COLOR}").strip().lower()
 					if create == 'y':
 						# Create the project directory if needed
 						if new_project != MASTER_PROJECT:
 							project_dir = os.path.join(document_dir, new_project)
 							os.makedirs(project_dir, exist_ok=True)
-							print(f"Created project directory: {project_dir}")
+							print_system(f"Created project directory: {project_dir}")
 						
 						# Index the new project
 						success = index_project(new_project, document_dir, index_dir, debug)
@@ -547,7 +599,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 							current_project = new_project
 							current_documents = load_index(index_path, backup_dir, debug)
 							current_embedding_config = get_project_embedding_config(new_project, document_dir, debug)
-							print(f"Switched to project: {current_project}")
+							print_system(f"Switched to project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
 					continue
 				
 				# Load the new project
@@ -557,14 +609,20 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 					current_documents = new_documents
 					# Load the project's embedding configuration
 					current_embedding_config = get_project_embedding_config(new_project, document_dir, debug)
-					print(f"Switched to project: {current_project}")
-					print(f"Embedding Type: {current_embedding_config.embedding_type}")
-					print(f"Embedding Model: {current_embedding_config.model_name}")
+					print_system(f"Switched to project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
+					print_system(f"Embedding Type: {current_embedding_config.embedding_type}")
+					print_system(f"Embedding Model: {current_embedding_config.model_name}")
 				else:
-					print(f"No documents found in project: {new_project}")
+					print_system(f"No documents found in project: {HIGHLIGHT_COLOR}{new_project}{RESET_COLOR}")
 				continue
 			
 			# Regular query - search for relevant documents
+			# Echo the query if it's not a command
+			if not is_command(query):
+				# Add a blank line after the query for better readability
+				print()
+				print_system("Searching for relevant documents...")
+				
 			relevant_docs = search_documents(
 				query, current_documents, current_project, 
 				document_dir, current_embedding_config, debug=debug
@@ -573,13 +631,14 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			# Ask Claude
 			answer = ask_claude(query, relevant_docs, api_key, current_project, debug)
 			
-			print("\nAnswer:")
-			print(answer)
+			# Print the answer with proper colors
+			print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
+			print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
 		except KeyboardInterrupt:
-			print("\nInterrupted by user. Exiting...")
+			print_system("\nInterrupted by user. Exiting...")
 			break
 		except Exception as e:
-			print(f"Error: {e}")
+			print_error(f"{e}")
 			if debug:
 				print(traceback.format_exc())
 
@@ -607,20 +666,33 @@ def main():
 						help="List all available projects")
 	parser.add_argument("--index", action="store_true",
 						help="Index the specified project before querying")
+	parser.add_argument("--no-color", action="store_true",
+						help="Disable colored output")
 	
 	args = parser.parse_args()
+	
+	# Disable colors if requested
+	global QUERY_COLOR, ANSWER_COLOR, DEBUG_COLOR, ERROR_COLOR, SYSTEM_COLOR, HIGHLIGHT_COLOR, RESET_COLOR
+	if args.no_color or not COLORS_AVAILABLE:
+		QUERY_COLOR = ""
+		ANSWER_COLOR = ""
+		DEBUG_COLOR = ""
+		ERROR_COLOR = ""
+		SYSTEM_COLOR = ""
+		HIGHLIGHT_COLOR = ""
+		RESET_COLOR = ""
 	
 	# Get API key from args or environment
 	api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY")
 	
 	if not api_key:
-		print("Error: Anthropic API key is required. Please provide it via --api-key or set the ANTHROPIC_API_KEY environment variable.")
+		print_error("Anthropic API key is required. Please provide it via --api-key or set the ANTHROPIC_API_KEY environment variable.")
 		sys.exit(1)
 	
 	# Check if document directory exists
 	if not os.path.exists(args.document_dir):
-		print(f"Error: Document directory not found: {args.document_dir}")
-		print("Please create the document directory and add your files.")
+		print_error(f"Document directory not found: {args.document_dir}")
+		print_system("Please create the document directory and add your files.")
 		sys.exit(1)
 	
 	# Create the index directory if it doesn't exist
@@ -630,10 +702,10 @@ def main():
 	if args.list_projects:
 		projects = discover_projects(args.index_dir)
 		if not projects:
-			print("No indexed projects found.")
+			print_system("No indexed projects found.")
 			return
 			
-		print("\nAvailable Projects:")
+		print_system("\nAvailable Projects:")
 		for project in projects:
 			# Get the document count for this project
 			index_path, backup_dir = get_index_path(args.index_dir, project)
@@ -650,21 +722,21 @@ def main():
 					embedding_types[key] = embedding_types.get(key, 0) + 1
 				
 				emb_info = ", ".join([f"{key}: {count}" for key, count in embedding_types.items()])
-				print(f"  {project} ({len(documents)} documents, {emb_info})")
+				print_system(f"  {HIGHLIGHT_COLOR}{project}{RESET_COLOR}{SYSTEM_COLOR} ({len(documents)} documents, {emb_info})")
 				
 				# Show config file path and info
 				config_path = get_project_config_path(project, args.document_dir)
 				if os.path.exists(config_path):
 					try:
 						config = EmbeddingConfig.from_json_file(config_path)
-						print(f"    Config: {config.embedding_type}/{config.model_name}")
+						print_system(f"    Config: {config.embedding_type}/{config.model_name}")
 					except:
-						print(f"    Config: Error loading {config_path}")
+						print_system(f"    Config: Error loading {config_path}")
 				else:
-					print(f"    Config: Not found (using defaults)")
+					print_system(f"    Config: Not found (using defaults)")
 					
 			except:
-				print(f"  {project} (error loading index)")
+				print_system(f"  {HIGHLIGHT_COLOR}{project}{RESET_COLOR}{SYSTEM_COLOR} (error loading index)")
 		return
 	
 	# Create embedding configuration from command line args
@@ -677,10 +749,10 @@ def main():
 	
 	# Handle indexing if requested
 	if args.index:
-		print(f"Indexing project: {args.project}")
+		print_system(f"Indexing project: {HIGHLIGHT_COLOR}{args.project}{RESET_COLOR}")
 		success = index_project(args.project, args.document_dir, args.index_dir, args.debug)
 		if not success:
-			print("Indexing failed. Exiting.")
+			print_error("Indexing failed. Exiting.")
 			sys.exit(1)
 	
 	# Get index path for the specified project
@@ -688,28 +760,28 @@ def main():
 	
 	# Check if the index exists
 	if not os.path.exists(index_path):
-		print(f"Index for project '{args.project}' not found: {index_path}")
+		print_system(f"Index for project '{HIGHLIGHT_COLOR}{args.project}{RESET_COLOR}{SYSTEM_COLOR}' not found: {index_path}")
 		# Ask if user wants to create it
-		create = input(f"Would you like to create and index project '{args.project}'? (y/n): ").strip().lower()
+		create = input(f"{SYSTEM_COLOR}Would you like to create and index project '{HIGHLIGHT_COLOR}{args.project}{RESET_COLOR}{SYSTEM_COLOR}'? (y/n): {RESET_COLOR}").strip().lower()
 		if create == 'y':
 			# Create the project directory if needed
 			if args.project != MASTER_PROJECT:
 				project_dir = os.path.join(args.document_dir, args.project)
 				os.makedirs(project_dir, exist_ok=True)
-				print(f"Created project directory: {project_dir}")
+				print_system(f"Created project directory: {project_dir}")
 			
 			# Index the project
 			success = index_project(args.project, args.document_dir, args.index_dir, args.debug)
 			if not success:
-				print("Indexing failed. Exiting.")
+				print_error("Indexing failed. Exiting.")
 				sys.exit(1)
 		else:
 			# List available projects
 			projects = discover_projects(args.index_dir)
 			if projects:
-				print("\nAvailable Projects:")
+				print_system("\nAvailable Projects:")
 				for project in projects:
-					print(f"  {project}")
+					print_system(f"  {HIGHLIGHT_COLOR}{project}{RESET_COLOR}")
 			sys.exit(1)
 	
 	# If no custom embedding config was provided, use the project's config
@@ -717,23 +789,23 @@ def main():
 		embedding_config = get_project_embedding_config(args.project, args.document_dir, args.debug)
 	
 	# Print application info
-	print(f"RAG Query Application with Project Support")
-	print(f"Python version: {sys.version}")
-	print(f"Project: {args.project}")
-	print(f"Embedding Type: {embedding_config.embedding_type}")
-	print(f"Embedding Model: {embedding_config.model_name}")
-	print(f"Index location: {index_path}")
+	print_system(f"RAG Query Application with Project Support")
+	print_system(f"Python version: {sys.version}")
+	print_system(f"Project: {HIGHLIGHT_COLOR}{args.project}{RESET_COLOR}")
+	print_system(f"Embedding Type: {embedding_config.embedding_type}")
+	print_system(f"Embedding Model: {embedding_config.model_name}")
+	print_system(f"Index location: {index_path}")
 	
 	try:
-		print(f"Anthropic SDK version: {anthropic.__version__}")
+		print_system(f"Anthropic SDK version: {anthropic.__version__}")
 	except AttributeError:
-		print("Anthropic SDK version: unknown")
+		print_system("Anthropic SDK version: unknown")
 	
 	# Load document index for the project
 	documents = load_index(index_path, backup_dir, args.debug)
 	
 	if not documents:
-		print(f"No documents found in the project index. Please add documents and run indexing.")
+		print_error(f"No documents found in the project index. Please add documents and run indexing.")
 		sys.exit(1)
 	
 	# Display information about the embeddings in the index
@@ -745,21 +817,33 @@ def main():
 			key = f"{emb_type}/{emb_model}"
 			embedding_types[key] = embedding_types.get(key, 0) + 1
 		
-		print("\n[DEBUG] Embedding types in index:")
+		print_debug("\nEmbedding types in index:")
 		for key, count in embedding_types.items():
-			print(f"[DEBUG]   {key}: {count} documents")
+			print_debug(f"  {key}: {count} documents")
 	
 	if args.query:
 		# Single query mode
-		relevant_docs = search_documents(args.query, documents, args.project, 
-										args.document_dir, embedding_config, debug=args.debug)
+		# Echo the query
+		print(f"{QUERY_COLOR}{args.query}{RESET_COLOR}\n")
+		
+		print_system("Searching for relevant documents...")
+		relevant_docs = search_documents(
+			args.query, documents, args.project, 
+			args.document_dir, embedding_config, debug=args.debug
+		)
+		
 		answer = ask_claude(args.query, relevant_docs, api_key, args.project, args.debug)
-		print(answer)
+		
+		# Print the answer with proper colors
+		print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
+		print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
 	else:
 		# Interactive mode
-		interactive_mode(documents, api_key, args.project, 
-						args.document_dir, args.index_dir, 
-						embedding_config, args.debug)
+		interactive_mode(
+			documents, api_key, args.project, 
+			args.document_dir, args.index_dir, 
+			embedding_config, args.debug
+		)
 
 
 if __name__ == "__main__":
