@@ -168,19 +168,20 @@ This application has been optimized for macOS, including Apple Silicon Macs. It 
 - **API Key Issues**: Verify your Anthropic API key is set correctly
 - **Memory Issues**: For large document collections, consider indexing projects separately
 
+## Next Steps
+
+   - Create way to access the relevant source documents
+   - Use alternative embedding / indexing models
+   - Have choice of LLMs for answer questions
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-```
 
-## 3. Optional: LICENSE file
 
-If you want to include a license, here's a simple MIT License:
-
-```
 MIT License
 
-Copyright (c) 2023 Your Name
+Copyright (c) 2023 Prickly Pixie Project
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

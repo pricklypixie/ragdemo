@@ -24,6 +24,7 @@ wheels/
 document_index/
 documents/
 .env
+process_citations.py
 
 # Logs and databases
 *.log

@@ -26,6 +26,14 @@ from datetime import datetime
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 os.environ["MPS_FALLBACK_POLICY"] = "0" 
 
+# Force Metal on MacOS
+# os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "0"
+# os.environ["PYTORCH_MPS_FALLBACK_POLICY"] = "0"
+
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
 import anthropic
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -187,7 +195,12 @@ def search_documents(query: str, documents: List[Document], model,
 		return []
 	
 	if debug:
-		print(f"[DEBUG] Searching for: '{query}'")
+		print(f"[DEBUG] Found {len(top_results)} relevant documents")
+		for i, (doc, sim) in enumerate(sorted_results[:top_k]):
+			project = doc.metadata.get('project', MASTER_PROJECT)
+			doc_name = doc.metadata.get('document_name', os.path.basename(doc.metadata.get('file_path', 'unknown')))
+			print(f"[DEBUG]   Result {i+1}: \"{doc_name}\" - {doc.metadata.get('file_path')} "
+				f"(project: {project}, score: {sim:.4f})")
 	
 	# Create query embedding
 	try:
@@ -246,9 +259,11 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 		else:
 			# Build context from relevant documents
 			context_pieces = []
+			
 			for i, doc in enumerate(relevant_docs):
 				# Get document metadata
-				source = f"{doc.metadata.get('file_path', 'Unknown document')}"
+				file_path = doc.metadata.get('file_path', 'Unknown document')
+				doc_name = doc.metadata.get('document_name', os.path.basename(file_path))
 				doc_project = doc.metadata.get('project', MASTER_PROJECT)
 				
 				# Include chunk info in the source
@@ -261,9 +276,11 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 				if doc_project != MASTER_PROJECT:
 					extra_info.append(f"project: {doc_project}")
 				
-				source_with_info = f"{source} ({chunk_info}, {', '.join(extra_info)})"
-				context_pieces.append(f"Document {i+1} (Source: {source_with_info}):\n{doc.content}")
-			
+				source_with_info = f"{file_path} ({chunk_info}, {', '.join(extra_info)})"
+				
+				# Include document name in the heading
+				context_pieces.append(f"Document {i+1}: \"{doc_name}\" (Source: {source_with_info}):\n{doc.content}")
+	
 			context = "\n\n".join(context_pieces)
 			
 			# Prepare prompt with context
@@ -277,10 +294,9 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 			{context}
 			
 			Please answer the user's question based on the information in these documents.
+			When referring to the documents in your answer, use their titles (in quotes) instead of "Document 1", "Document 2", etc.
 			If the documents don't contain the necessary information, please say so and answer based on your general knowledge.
-			In your answer, cite which documents you used.
-			"""
-		
+			"""		
 		if debug:
 			print("[DEBUG] Sending prompt to Claude")
 		

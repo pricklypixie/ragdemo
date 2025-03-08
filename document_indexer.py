@@ -41,7 +41,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Constants
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
-MAX_CHUNK_SIZE = 1500  # Characters
+MAX_CHUNK_SIZE = 512  # Characters
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 MASTER_PROJECT = "master"  # Name for the master index
 
@@ -203,7 +203,7 @@ def create_paragraph_chunks(text: str, max_chunk_size: int, debug: bool = False)
 		current_chunk.append(paragraph)
 		current_size = new_size
 		i += 1
-	
+		
 	# Don't forget to save the last chunk if there's anything left
 	if current_chunk:
 		chunks.append('\n\n'.join(current_chunk))
@@ -377,6 +377,7 @@ def index_file(file_path: str, model, document_dir: str, project_indexes: Dict[s
 			metadata = {
 				'file_path': rel_path,
 				'file_name': file_name,
+				'document_name': os.path.splitext(file_name)[0],  # File name without extension
 				'project': project,
 				'chunk_index': i,
 				'total_chunks': len(chunks),
