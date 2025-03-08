@@ -9,6 +9,7 @@ This application:
 4. Sends the query and context to Claude for answering
 5. Supports on-demand indexing of projects
 6. Features a colorful terminal interface
+7. Logs prompts to JSON files when in debug mode
 """
 
 import os
@@ -64,6 +65,7 @@ DEFAULT_EMBEDDING_TYPE = "sentence_transformers"
 TOP_K_DOCUMENTS = 3
 API_TIMEOUT = 60  # Timeout for API calls in seconds
 MASTER_PROJECT = "master"  # Name for the master index
+PROMPTS_DIR = "prompts"  # Directory to save prompt logs
 
 # Color scheme
 QUERY_COLOR = Fore.GREEN
@@ -107,6 +109,54 @@ def print_system(message: str) -> None:
 	print(f"{SYSTEM_COLOR}{message}{RESET_COLOR}")
 
 
+def save_prompt_to_json(prompt: str, query: str, project: str, relevant_docs: List[Document], prompts_dir: str = PROMPTS_DIR) -> str:
+	"""
+	Save the prompt and related information to a JSON file.
+	Returns the path to the saved file.
+	"""
+	# Create the prompts directory if it doesn't exist
+	os.makedirs(prompts_dir, exist_ok=True)
+	
+	# Generate timestamp for the filename
+	timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+	file_path = os.path.join(prompts_dir, f"{timestamp}.json")
+	
+	# Prepare the document context information
+	doc_contexts = []
+	for i, doc in enumerate(relevant_docs):
+		doc_contexts.append({
+			"index": i + 1,
+			"file_path": doc.metadata.get('file_path', 'Unknown'),
+			"project": doc.metadata.get('project', MASTER_PROJECT),
+			"chunk_index": doc.metadata.get('chunk_index', 0),
+			"total_chunks": doc.metadata.get('total_chunks', 0),
+			"embedding_model": doc.metadata.get('embedding_model', 'Unknown'),
+			"embedding_type": doc.metadata.get('embedding_type', 'Unknown'),
+			"content_length": len(doc.content),
+			"content_preview": doc.content[:100] + "..." if len(doc.content) > 100 else doc.content
+		})
+	
+	# Create the data structure to save
+	data = {
+		"timestamp": timestamp,
+		"query": query,
+		"project": project,
+		"model": MODEL,
+		"max_tokens": MAX_TOKENS,
+		"num_relevant_docs": len(relevant_docs),
+		"document_contexts": doc_contexts,
+		"prompt": prompt
+	}
+	
+	# Save to file
+	try:
+		with open(file_path, 'w') as f:
+			json.dump(data, f, indent=2)
+		return file_path
+	except Exception as e:
+		print_error(f"Failed to save prompt to {file_path}: {e}")
+		return ""
+		
 def timeout_handler(signum, frame):
 	"""Signal handler for timeouts."""
 	raise APITimeoutError("API call timed out")
@@ -414,7 +464,7 @@ def search_documents(query: str, documents: List[Document], project: str,
 		return []
 
 
-def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project: str, debug: bool = False) -> str:
+def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project: str, debug: bool = False, prompts_dir: str = PROMPTS_DIR) -> str:
 	"""Process a user query and return Claude's response."""
 	try:
 		client = anthropic.Anthropic(api_key=api_key)
@@ -469,6 +519,11 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 		
 		if debug:
 			print_debug("Sending prompt to Claude")
+			
+			# Save the prompt to a JSON file - FIXED PARAMETER ORDER
+			log_path = save_prompt_to_json(prompt, query, project, relevant_docs, prompts_dir)
+			if log_path:
+				print_debug(f"Saved prompt to {log_path}")
 		
 		# Set up timeout
 		signal.signal(signal.SIGALRM, timeout_handler)
@@ -503,7 +558,6 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 		# Make sure to cancel the alarm
 		signal.alarm(0)
 
-
 def is_command(text: str) -> bool:
 	"""Check if the input is a command rather than a question."""
 	command_prefixes = ["project ", "projects", "config", "index", "exit", "quit"]
@@ -511,9 +565,10 @@ def is_command(text: str) -> bool:
 
 
 def interactive_mode(documents: List[Document], api_key: str, project: str, 
-					document_dir: str, index_dir: str, 
-					embedding_config: Optional[EmbeddingConfig] = None,
-					debug: bool = False) -> None:
+	document_dir: str, index_dir: str, 
+	embedding_config: Optional[EmbeddingConfig] = None,
+	debug: bool = False, prompts_dir: str = PROMPTS_DIR) -> None:
+
 	"""Run the application in interactive mode."""
 	print_system(f"RAG Query Application - Interactive Mode (Project: {HIGHLIGHT_COLOR}{project}{RESET_COLOR}{SYSTEM_COLOR})")
 	print_system("Enter 'exit' or 'quit' to end the session")
@@ -629,7 +684,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			)
 			
 			# Ask Claude
-			answer = ask_claude(query, relevant_docs, api_key, current_project, debug)
+			answer = ask_claude(query, relevant_docs, api_key, current_project, debug, prompts_dir)
 			
 			# Print the answer with proper colors
 			print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
@@ -643,6 +698,8 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				print(traceback.format_exc())
 
 
+# Modify line 733 and nearby code
+				
 def main():
 	"""Main entry point for the query application."""
 	parser = argparse.ArgumentParser(description="RAG Query Application with Project Support")
@@ -668,8 +725,26 @@ def main():
 						help="Index the specified project before querying")
 	parser.add_argument("--no-color", action="store_true",
 						help="Disable colored output")
+	parser.add_argument("--prompts-dir", type=str, default=PROMPTS_DIR,
+						help="Directory to save prompt logs (only in debug mode)")
 	
 	args = parser.parse_args()
+	
+	# Set prompts directory from args (no need for global declaration)
+	if args.prompts_dir != PROMPTS_DIR:
+		# Only use a different directory if it was explicitly specified
+		prompts_dir = args.prompts_dir
+		# Create the directory if it doesn't exist
+		os.makedirs(prompts_dir, exist_ok=True)
+		# Update the save_prompt_to_json function to use this directory
+		if args.debug:
+			print_debug(f"Prompt logs will be saved to: {os.path.abspath(prompts_dir)}")
+	else:
+		prompts_dir = PROMPTS_DIR
+		# Create the default directory if in debug mode
+		if args.debug:
+			os.makedirs(prompts_dir, exist_ok=True)
+			print_debug(f"Prompt logs will be saved to: {os.path.abspath(prompts_dir)}")
 	
 	# Disable colors if requested
 	global QUERY_COLOR, ANSWER_COLOR, DEBUG_COLOR, ERROR_COLOR, SYSTEM_COLOR, HIGHLIGHT_COLOR, RESET_COLOR
@@ -697,6 +772,11 @@ def main():
 	
 	# Create the index directory if it doesn't exist
 	os.makedirs(args.index_dir, exist_ok=True)
+	
+	# Create prompts directory if in debug mode
+	if args.debug:
+		os.makedirs(PROMPTS_DIR, exist_ok=True)
+		print_debug(f"Prompt logs will be saved to: {os.path.abspath(PROMPTS_DIR)}")
 	
 	# Just list projects if requested
 	if args.list_projects:
@@ -832,8 +912,8 @@ def main():
 			args.document_dir, embedding_config, debug=args.debug
 		)
 		
-		answer = ask_claude(args.query, relevant_docs, api_key, args.project, args.debug)
-		
+		answer = ask_claude(args.query, relevant_docs, api_key, args.project, args.debug, prompts_dir)
+			
 		# Print the answer with proper colors
 		print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
 		print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
@@ -842,7 +922,7 @@ def main():
 		interactive_mode(
 			documents, api_key, args.project, 
 			args.document_dir, args.index_dir, 
-			embedding_config, args.debug
+			embedding_config, args.debug, prompts_dir
 		)
 
 

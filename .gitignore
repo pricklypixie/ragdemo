@@ -23,6 +23,7 @@ wheels/
 # Project specific
 document_index/
 documents/
+prompts/
 .env
 process_citations.py
 
