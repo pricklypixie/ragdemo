@@ -144,6 +144,50 @@ You can customize these parameters:
 - `--embedding-model`: SentenceTransformer model (default: `all-MiniLM-L6-v2`)
 - `--max-chunk-size`: Maximum chunk size in characters (default: 1500)
 
+## Project-Specific Embedding Configuration
+
+Each project can have its own embedding configuration by adding an `embedding_config.json` file to the project directory:
+
+```json
+{
+  "embedding_type": "sentence_transformers",
+  "model_name": "all-MiniLM-L6-v2",
+  "api_key": null,
+  "additional_params": {}
+}
+
+### Supported Embedding Types
+
+1. **sentence_transformers** (default)
+   - Local embedding generation using sentence-transformers
+   - Recommended models: "all-MiniLM-L6-v2", "all-mpnet-base-v2"
+   - No API key required
+
+2. **openai**
+   - OpenAI's embedding API
+   - Recommended models: "text-embedding-3-small", "text-embedding-3-large"
+   - Requires OpenAI API key (set via OPENAI_API_KEY environment variable)
+
+### Example Configurations
+
+#### For multilingual documents:
+```json
+{
+  "embedding_type": "sentence_transformers",
+  "model_name": "paraphrase-multilingual-mpnet-base-v2"
+}
+```
+
+#### For OpenAI embeddings:
+```json
+{
+  "embedding_type": "openai",
+  "model_name": "text-embedding-3-small"
+}
+```
+
+Note: Combining documents with different embedding models in the same index is supported. The system will handle the differences during search (untested).
+
 ## Mac-Specific Notes
 
 This application has been optimized for macOS, including Apple Silicon Macs. It uses CPU for embeddings to avoid Metal compatibility issues.
@@ -161,6 +205,24 @@ This application has been optimized for macOS, including Apple Silicon Macs. It 
    - Semantic search finds relevant document chunks
    - Claude is prompted with the query and relevant chunks
    - Claude provides an answer based on the provided context
+   
+### Creating a New Project:
+   
+```bash
+python rag_query.py --project new_project --index
+```
+
+This will:
+1. Create the project directory if it doesn't exist
+2. Create a default embedding configuration if none exists
+3. Index all files in the project directory
+4. Save the index for future queries
+
+### Querying with Detailed Document Information:
+
+```bash
+python rag_query.py --project sample --query "What is the main topic?" --debug
+```
 
 ## Troubleshooting
 
