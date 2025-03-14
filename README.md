@@ -48,6 +48,23 @@ export ANTHROPIC_API_KEY="your-api-key"
 set ANTHROPIC_API_KEY=your-api-key
 ```
 
+5. For using OpenAI embeddings or other Sentence Transformer embeddings, set the appropriate keys:
+
+```bash
+export HF_TOKEN=your-huggingface-token
+export OPENAI_API_KEY=your-openai-key
+
+
+6. To use on device models
+
+```bash
+# Then install a model (e.g., GPT4All)
+llm install gpt4all
+
+# Option 2: Install transformers
+pip install transformers torch
+```
+
 ## Usage
 
 ### Setting Up Your Documents
@@ -134,6 +151,13 @@ When in interactive mode, you can use these commands:
 - `projects` - List all available projects
 - `project <name>` - Switch to a different project
 - `exit` or `quit` - Exit the application
+
+To manage the LLM used to answer the queries:
+- `models` - List all available LLMs
+- `llm claude` - Use Claude API using local api key
+- `llm local [model_name]` - Use a local model with llm library
+- `llm hf [model_name]` - Use a Hugging Face model
+
 
 ## Configuration
 

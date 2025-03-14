@@ -26,6 +26,7 @@ documents/
 prompts/
 .env
 process_citations.py
+process_pdf.py
 
 # Logs and databases
 *.log
