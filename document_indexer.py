@@ -53,6 +53,8 @@ def split_into_paragraphs(text: str) -> List[str]:
 	"""Split text into paragraphs based on double newlines."""
 	# Handle different line ending styles
 	text = text.replace('\r\n', '\n')
+	text = text.replace('\n', '\n\n')
+	text = text.replace('\n\n\n', '\n\n')
 	
 	# Split on paragraph breaks (double newlines)
 	paragraphs = text.split('\n\n')
