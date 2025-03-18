@@ -79,7 +79,7 @@ from embeddings import EmbeddingConfig, get_embedding_provider, load_project_con
 
 # Constants
 MODEL = "claude-3-opus-20240229"
-MAX_TOKENS = 4096
+MAX_TOKENS = 8096
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
@@ -1435,13 +1435,13 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	
 	# Initialize embedding provider cache
 	provider_cache = EmbeddingProviderCache(debug=debug)
-	
-	# Preload the embedding provider for the current project
-	print_system("Loading embedding model...")
-	start_time = time.time()
-	provider_cache.get_provider(current_project, document_dir, current_embedding_config)
-	load_time = time.time() - start_time
-	print_system(f"Embedding model loaded in {load_time:.2f} seconds")
+	# 
+	# # Preload the embedding provider for the current project
+	# print_system("Loading embedding model...")
+	# start_time = time.time()
+	# provider_cache.get_provider(current_project, document_dir, current_embedding_config)
+	# load_time = time.time() - start_time
+	# print_system(f"Embedding model loaded in {load_time:.2f} seconds")
 	
 	# Function to get the current model name based on LLM type
 	def get_current_model_name():
