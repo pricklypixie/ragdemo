@@ -26,6 +26,20 @@ import subprocess
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 
+import atexit
+import json
+
+try:
+	import readline  # For Unix/Linux/Mac
+except ImportError:
+	try:
+		import pyreadline3 as readline  # For Windows
+	except ImportError:
+		# Readline not available
+		pass
+
+
+
 import llm
 
 # Force CPU usage instead of Metal on MacOS
@@ -112,6 +126,112 @@ class Document:
 		self.metadata = metadata
 		self.embedding = embedding
 
+
+class CommandHistory:
+		"""Manages command history for interactive mode."""
+		
+		def __init__(self, history_dir="history", max_size=1000):
+			"""
+			Initialize command history manager.
+			
+			Args:
+				history_dir: Directory to store history files
+				max_size: Maximum number of commands to store in history
+			"""
+			self.history_dir = history_dir
+			self.max_size = max_size
+			self.entries = []  # List of (command, is_query) tuples
+			
+			# Create history directory if it doesn't exist
+			os.makedirs(history_dir, exist_ok=True)
+			
+			# Set up readline
+			try:
+				# Set up readline history
+				self.history_file = os.path.join(os.path.expanduser("~"), ".rag_query_history")
+				
+				# Read existing history if it exists
+				try:
+					readline.read_history_file(self.history_file)
+				except FileNotFoundError:
+					pass
+					
+				# Save history on exit
+				atexit.register(readline.write_history_file, self.history_file)
+				
+				# Set history length
+				readline.set_history_length(max_size)
+				
+				self.readline_supported = True
+			except (ImportError, AttributeError):
+				self.readline_supported = False
+		
+		def add(self, command, is_query=True):
+			"""
+			Add a command to history.
+			
+			Args:
+				command: The command or query string
+				is_query: Whether this is a query (True) or a command (False)
+			"""
+			self.entries.append((command, is_query))
+			if len(self.entries) > self.max_size:
+				self.entries.pop(0)  # Remove oldest entry if we exceed max size
+		
+		def clear(self):
+			"""Clear the command history."""
+			self.entries = []
+			
+			# Clear readline history if supported
+			if self.readline_supported:
+				for i in range(readline.get_current_history_length()):
+					readline.remove_history_item(0)
+		
+		def save(self, filename=None):
+			"""
+			Save history to a JSON file.
+			
+			Args:
+				filename: Optional filename, if None uses timestamp
+				
+			Returns:
+				Path to the saved file
+			"""
+			if not filename:
+				timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+				filename = f"history_{timestamp}.json"
+			
+			filepath = os.path.join(self.history_dir, filename)
+			
+			# Convert history to a serializable format
+			history_data = {
+				"timestamp": datetime.now().isoformat(),
+				"count": len(self.entries),
+				"entries": [
+					{
+						"command": cmd,
+						"type": "query" if is_query else "command"
+					}
+					for cmd, is_query in self.entries
+				]
+			}
+			
+			# Save to file
+			try:
+				with open(filepath, 'w') as f:
+					json.dump(history_data, f, indent=2)
+				return filepath
+			except Exception as e:
+				print_error(f"Failed to save history: {e}")
+				return None
+		
+		def get_entries(self):
+			"""Get all history entries."""
+			return self.entries
+		
+		def get_last_n(self, n=10):
+			"""Get the last n history entries."""
+			return self.entries[-n:] if n <= len(self.entries) else self.entries
 
 def print_debug(message: str) -> None:
 	"""Print debug message in debug color."""
@@ -1017,35 +1137,36 @@ def ask_local_hf(query: str, relevant_docs: List[Document], project: str, local_
 
 def is_command(text: str) -> bool:
 	"""Check if the input is a command rather than a question."""
-	command_prefixes = ["project ", "projects", "config", "index", "index clear", "exit", "quit", "llm ", "models"]
+	command_prefixes = [
+		"help", "project ", "projects", "config", 
+		"index", "index clear",
+		"history", "history clear", "history save", 
+		"exit", "quit", "llm ", "models"
+	]
 	return any(text.lower() == cmd or text.lower().startswith(cmd) for cmd in command_prefixes)		
-		
-		
+
+
 def interactive_mode(documents: List[Document], api_key: str, project: str, 
 					document_dir: str, index_dir: str, 
 					embedding_config: Optional[EmbeddingConfig] = None,
 					debug: bool = False, prompts_dir: str = PROMPTS_DIR,
 					llm_type: str = LLM_CLAUDE, local_model: str = DEFAULT_LOCAL_MODEL,
-					hf_model: str = DEFAULT_HF_MODEL) -> None:
+					hf_model: str = DEFAULT_HF_MODEL, 
+					history_dir: str = "history") -> None:
 	"""Run the application in interactive mode."""
 	print_system(f"RAG Query Application - Interactive Mode (Project: {HIGHLIGHT_COLOR}{project}{RESET_COLOR}{SYSTEM_COLOR})")
-	print_system("Enter 'exit' or 'quit' to end the session")
-	print_system("Enter 'project <name>' to switch projects")
-	print_system("Enter 'projects' to list available projects")
-	print_system("Enter 'index' to create (or update) the current project's index")
-	print_system("Enter 'index clear' to delete the current project's index")
-	print_system("Enter 'config' to show current embedding configuration")
-	print_system(f"Enter 'llm claude' to use Claude API")
-	print_system(f"Enter 'llm local [model_name]' to use a local model with llm library")
-	print_system(f"Enter 'llm hf [model_name]' to use a Hugging Face model")
-	print_system("Enter 'models' to list available models")
+	print_system("Type 'help' to see available commands")
 	
+	# Initialize variables
 	current_project = project
 	current_documents = documents
 	current_embedding_config = embedding_config or get_project_embedding_config(project, document_dir, debug)
 	current_llm_type = llm_type
 	current_local_model = local_model
 	current_hf_model = hf_model
+	
+	# Initialize history
+	history = CommandHistory(history_dir=history_dir)
 	
 	# Function to get the current model name based on LLM type
 	def get_current_model_name():
@@ -1055,6 +1176,9 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			return current_hf_model
 		else:
 			return "API"
+	
+	# Print the initial help info (optional, you can remove this if you prefer)
+	print_help_info(current_project, current_llm_type, get_current_model_name())
 	
 	while True:
 		try:
@@ -1066,10 +1190,51 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			if not query:
 				continue
 			
+			# Add to history - determine if it's a command or query
+			is_query = not is_command(query)
+			history.add(query, is_query=is_query)
+			
 			if query.lower() in ['exit', 'quit']:
 				print_system("Exiting...")
 				break
+				
+			elif query.lower() == 'help':
+				# Display help information
+				print_help_info(current_project, current_llm_type, get_current_model_name())
+				continue
 			
+			
+			
+			# Handle special commands
+			if query.lower() == 'history':
+				# Show command history
+				entries = history.get_entries()
+				if not entries:
+					print_system("History is empty")
+				else:
+					print_system("\nCommand History:")
+					for i, (cmd, is_query) in enumerate(entries[-20:], 1):  # Show last 20 entries
+						cmd_type = "Query" if is_query else "Command"
+						color = QUERY_COLOR if is_query else SYSTEM_COLOR
+						print(f"{color}{i}. [{cmd_type}] {cmd}{RESET_COLOR}")
+				continue
+				
+			elif query.lower() == 'history clear':
+				# Clear command history
+				confirm = input(f"{SYSTEM_COLOR}Are you sure you want to clear the command history? (y/n): {RESET_COLOR}").strip().lower()
+				if confirm == 'y':
+					history.clear()
+					print_system("Command history cleared")
+				continue
+				
+			elif query.lower() == 'history save':
+				# Save command history to file
+				filepath = history.save()
+				if filepath:
+					print_system(f"History saved to: {filepath}")
+				continue
+			
+			# ... [rest of your existing command handling code] ...
 			# Handle special commands
 			if query.lower() == 'projects':
 				projects = discover_projects(index_dir)
@@ -1337,7 +1502,51 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				print(traceback.format_exc())
 				
 				
+def print_help_info(current_project: str, current_llm_type: str, current_model: str) -> None:
+				"""
+				Print help information about available commands.
 				
+				Args:
+					current_project: The current project name
+					current_llm_type: The current LLM type
+					current_model: The current model name
+				"""
+				print_system(f"\nRAG Query Application - Help")
+				print_system(f"Current Project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
+				print_system(f"Current LLM: {HIGHLIGHT_COLOR}{current_llm_type}:{current_model}{RESET_COLOR}")
+				
+				print_system("\nAvailable Commands:")
+				print_system("  help                     Show this help information")
+				print_system("  exit, quit               End the session")
+				
+				# Project commands
+				print_system("\nProject Commands:")
+				print_system("  projects                 List all available projects")
+				print_system("  project <name>           Switch to a different project")
+				print_system("  config                   Show current embedding configuration")
+				
+				# Index commands
+				print_system("\nIndex Commands:")
+				print_system("  index                    Re-index the current project")
+				print_system("  index clear              Clear the current project's index")
+				
+				# LLM commands
+				print_system("\nLLM Commands:")
+				print_system("  models                   List available LLM models")
+				print_system("  llm claude               Use Claude API")
+				print_system("  llm local [model_name]   Use a local model via llm library")
+				print_system("  llm hf [model_name]      Use a Hugging Face model")
+				
+				# History commands
+				print_system("\nHistory Commands:")
+				print_system("  history                  Show command history")
+				print_system("  history clear            Clear command history")
+				print_system("  history save             Save history to a file")
+				
+				print_system("\nFor any other input, the application will treat it as a query")
+				print_system("and search for relevant documents to help answer it.")
+				
+								
 				
 def get_response(query: str, relevant_docs: List[Document], api_key: str, project: str, 
 							llm_type: str = LLM_CLAUDE, model_name: str = None,
@@ -1424,6 +1633,9 @@ def main():
 						help="Local model to use when --llm=local (default: gpt4all)")
 	parser.add_argument("--hf-model", type=str, default=DEFAULT_HF_MODEL,
 						help="Hugging Face model to use when --llm=hf")
+	parser.add_argument("--history-dir", type=str, default="history",
+						help="Directory to store command history")
+
 
 	
 	args = parser.parse_args()
@@ -1650,7 +1862,8 @@ def main():
 			documents, api_key, args.project, 
 			args.document_dir, args.index_dir, 
 			embedding_config, args.debug, prompts_dir,
-			args.llm, args.local_model, args.hf_model
+			args.llm, args.local_model, args.hf_model,
+			args.history_dir
 		)
 
 if __name__ == "__main__":

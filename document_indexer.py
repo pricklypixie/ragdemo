@@ -24,6 +24,8 @@ from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 from pathlib import Path
 
+
+
 # Import our custom embedding library
 from embeddings import EmbeddingConfig, get_embedding_provider, load_project_config
 
@@ -48,6 +50,111 @@ class Document:
 		self.metadata = metadata
 		self.embedding = embedding
 
+class CommandHistory:
+		"""Manages command history for interactive mode."""
+		
+		def __init__(self, history_dir="history", max_size=1000):
+			"""
+			Initialize command history manager.
+			
+			Args:
+				history_dir: Directory to store history files
+				max_size: Maximum number of commands to store in history
+			"""
+			self.history_dir = history_dir
+			self.max_size = max_size
+			self.entries = []  # List of (command, is_query) tuples
+			
+			# Create history directory if it doesn't exist
+			os.makedirs(history_dir, exist_ok=True)
+			
+			# Set up readline
+			try:
+				# Set up readline history
+				self.history_file = os.path.join(os.path.expanduser("~"), ".rag_query_history")
+				
+				# Read existing history if it exists
+				try:
+					readline.read_history_file(self.history_file)
+				except FileNotFoundError:
+					pass
+					
+				# Save history on exit
+				atexit.register(readline.write_history_file, self.history_file)
+				
+				# Set history length
+				readline.set_history_length(max_size)
+				
+				self.readline_supported = True
+			except (ImportError, AttributeError):
+				self.readline_supported = False
+		
+		def add(self, command, is_query=True):
+			"""
+			Add a command to history.
+			
+			Args:
+				command: The command or query string
+				is_query: Whether this is a query (True) or a command (False)
+			"""
+			self.entries.append((command, is_query))
+			if len(self.entries) > self.max_size:
+				self.entries.pop(0)  # Remove oldest entry if we exceed max size
+		
+		def clear(self):
+			"""Clear the command history."""
+			self.entries = []
+			
+			# Clear readline history if supported
+			if self.readline_supported:
+				for i in range(readline.get_current_history_length()):
+					readline.remove_history_item(0)
+		
+		def save(self, filename=None):
+			"""
+			Save history to a JSON file.
+			
+			Args:
+				filename: Optional filename, if None uses timestamp
+				
+			Returns:
+				Path to the saved file
+			"""
+			if not filename:
+				timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+				filename = f"history_{timestamp}.json"
+			
+			filepath = os.path.join(self.history_dir, filename)
+			
+			# Convert history to a serializable format
+			history_data = {
+				"timestamp": datetime.now().isoformat(),
+				"count": len(self.entries),
+				"entries": [
+					{
+						"command": cmd,
+						"type": "query" if is_query else "command"
+					}
+					for cmd, is_query in self.entries
+				]
+			}
+			
+			# Save to file
+			try:
+				with open(filepath, 'w') as f:
+					json.dump(history_data, f, indent=2)
+				return filepath
+			except Exception as e:
+				print_error(f"Failed to save history: {e}")
+				return None
+		
+		def get_entries(self):
+			"""Get all history entries."""
+			return self.entries
+		
+		def get_last_n(self, n=10):
+			"""Get the last n history entries."""
+			return self.entries[-n:] if n <= len(self.entries) else self.entries
 
 def split_into_paragraphs(text: str) -> List[str]:
 	"""Split text into paragraphs based on double newlines."""

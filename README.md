@@ -65,6 +65,19 @@ llm install gpt4all
 pip install transformers torch
 ```
 
+### To work on development branch
+
+```bash
+conda create -n ragdemo
+conda activate ragdemo
+
+git clone -b development https://github.com/pricklypixie/ragdemo.git
+cd ragdemo
+
+# when some new development changes are made
+git pull
+
+
 ## Usage
 
 ### Setting Up Your Documents
