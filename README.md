@@ -65,6 +65,19 @@ llm install gpt4all
 pip install transformers torch
 ```
 
+### To work on development branch
+
+```bash
+conda create -n ragdemo
+conda activate ragdemo
+
+git clone -b development https://github.com/pricklypixie/ragdemo.git
+cd ragdemo
+
+# when some new development changes are made
+git pull
+
+
 ## Usage
 
 ### Setting Up Your Documents
@@ -273,8 +286,10 @@ llm mlx-community/OLMo-2-0325-32B-Instruct-4bit
 ## Next Steps
 
    - Create way to access the relevant source documents
-   - Use alternative embedding / indexing models
-   - Have choice of LLMs for answer questions
+   
+## Issues
+
+   - Search can return the same document three times (if three chunks from the same document have the highest scores). Should be changed to return the three highest scoring documents.
 
 ## License
 

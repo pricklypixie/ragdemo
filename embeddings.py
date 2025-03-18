@@ -15,15 +15,15 @@ import traceback
 from typing import List, Dict, Any, Optional, Union, Tuple
 
 # Force CPU usage instead of Metal on MacOS
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "0"
 os.environ["MPS_FALLBACK_POLICY"] = "0"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Disable CUDA
 
 # Set threading options
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["OMP_NUM_THREADS"] = "8"
+os.environ["MKL_NUM_THREADS"] = "8"
+os.environ["OPENBLAS_NUM_THREADS"] = "8"
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # Default models for each embedding type
 DEFAULT_MODELS = {
@@ -230,10 +230,10 @@ class SentenceTransformersProvider(BaseEmbeddingProvider):
 			from sentence_transformers import SentenceTransformer
 			
 			self.debug_log(f"PyTorch version: {torch.__version__}")
-			self.debug_log(f"Loading Sentence Transformer model: {self.config.model_name} on CPU")
+			self.debug_log(f"Loading Sentence Transformer model: {self.config.model_name} on MPS")
 			
 			# Force CPU usage
-			self.model = SentenceTransformer(self.config.model_name, device="cpu")
+			self.model = SentenceTransformer(self.config.model_name, device="mps")
 			
 			self.debug_log("Model loaded successfully")
 		except ImportError as e:

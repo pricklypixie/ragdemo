@@ -20,9 +20,11 @@ import time
 import traceback
 import gc
 import warnings
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Optional, Any, Set
 from datetime import datetime
 from pathlib import Path
+from tqdm import tqdm
+
 
 # Import our custom embedding library
 from embeddings import EmbeddingConfig, get_embedding_provider, load_project_config
@@ -33,7 +35,9 @@ warnings.filterwarnings("ignore", message="resource_tracker")
 # Constants
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
-MAX_CHUNK_SIZE = 1500  # Characters
+MAX_CHUNK_SIZE = 1500  # Characters - this should be a default and should change depending on embedding model
+MIN_CHUNK_SIZE = 50  # Minimum characters for a chunk to be indexed
+MAX_CHUNKS = 100 # temporary fix for files that don't chunk properly
 MASTER_PROJECT = "master"  # Name for the master index
 
 
@@ -51,10 +55,13 @@ class Document:
 
 def split_into_paragraphs(text: str) -> List[str]:
 	"""Split text into paragraphs based on double newlines."""
-	# Handle different line ending styles
+	# Normalize line endings
 	text = text.replace('\r\n', '\n')
-	text = text.replace('\n', '\n\n')
+	
+	# Ensure paragraphs are separated by exactly one blank line
 	text = text.replace('\n\n\n', '\n\n')
+	while '\n\n\n' in text:
+		text = text.replace('\n\n\n', '\n\n')
 	
 	# Split on paragraph breaks (double newlines)
 	paragraphs = text.split('\n\n')
@@ -63,7 +70,6 @@ def split_into_paragraphs(text: str) -> List[str]:
 	paragraphs = [p.strip() for p in paragraphs if p.strip()]
 	
 	return paragraphs
-
 
 def create_paragraph_chunks(text: str, max_chunk_size: int, debug: bool = False) -> List[str]:
 	"""
@@ -91,6 +97,13 @@ def create_paragraph_chunks(text: str, max_chunk_size: int, debug: bool = False)
 	i = 0
 	
 	while i < len(paragraphs):
+		
+		# Check if we've reached the maximum number of chunks
+		if len(chunks) >= MAX_CHUNKS:
+			if debug:
+				print(f"WARNING: Reached maximum number of chunks ({MAX_CHUNKS}). Stopping chunking process.")
+			break
+
 		paragraph = paragraphs[i]
 		
 		# If this is the first paragraph of a new chunk and we have a previous chunk's
@@ -237,77 +250,67 @@ def save_index(documents: List[Document], index_path: str, backup_dir: str, debu
 	try:
 		with open(index_path, 'wb') as f:
 			pickle.dump(documents, f)
-		print(f"Saved {len(documents)} documents to index: {index_path}")
+		
+		if debug:
+			print(f"Saved {len(documents)} documents to index: {index_path}")
 	except Exception as e:
 		print(f"Error saving index: {e}")
 
 
+def get_accurate_chunk_count(files: List[str], max_chunk_size: int, debug: bool = False) -> int:
+	"""
+	Pre-process all files to get an accurate count of chunks that will be created.
+	"""
+	print("Calculating exact number of chunks (pre-processing documents)...")
+	total_chunks = 0
+	skipped_files = 0
+	
+	# Use a progress bar for the pre-processing phase
+	with tqdm(total=len(files), desc="Pre-processing", unit="file") as pbar:
+		for file_path in files:
+			try:
+				with open(file_path, 'r', encoding='utf-8') as f:
+					content = f.read()
+				
+				# Use the actual chunking logic to get an accurate count
+				chunks = create_paragraph_chunks(content, max_chunk_size, False)
+				
+				# Filter out chunks that are too small
+				chunks = [chunk for chunk in chunks if len(chunk) >= MIN_CHUNK_SIZE]
+				
+				# Apply cap of MAX_CHUNKS per file
+				actual_chunks = min(len(chunks), MAX_CHUNKS)
+				total_chunks += actual_chunks
+				
+				file_name = os.path.basename(file_path)
+				if debug and actual_chunks > 0:
+					print(f"[DEBUG] {file_name}: {actual_chunks} chunks")
+				
+			except Exception as e:
+				if debug:
+					print(f"[DEBUG] Error pre-processing {file_path}: {e}")
+				skipped_files += 1
+			
+			pbar.update(1)
+	
+	if skipped_files > 0:
+		print(f"Warning: {skipped_files} files could not be pre-processed")
+	
+	return total_chunks
+
+
 def index_file(file_path: str, project_dir: str, document_dir: str, 
-			   project_indexes: Dict[str, List[Document]], 
-			   max_chunk_size: int, embedding_config: Optional[EmbeddingConfig] = None,
-			   debug: bool = False) -> None:
-	"""
-	Index a single file by creating paragraph-based chunks with overlap and generating embeddings.
-	Updates both the project-specific index and the master index.
-	"""
-	try:
-		with open(file_path, 'r', encoding='utf-8') as f:
-			content = f.read()
-		
-		rel_path = os.path.relpath(file_path, document_dir)
-		file_name = os.path.basename(file_path)
-		file_size = os.path.getsize(file_path)
-		
+				   project_indexes: Dict[str, List[Document]], 
+				   max_chunk_size: int, embedding_config: Optional[EmbeddingConfig] = None,
+				   debug: bool = False) -> None:
+		"""
+		Index a single file by creating paragraph-based chunks with overlap and generating embeddings.
+		Updates both the project-specific index and the master index.
+		"""
 		# Get the project for this file
 		project = get_project_path(file_path, document_dir)
 		
-		if debug:
-			print(f"[DEBUG] Processing file: {rel_path} (project: {project}, size: {file_size} bytes)")
-		
-		# Get file stats
-		stats = os.stat(file_path)
-		modified_time = datetime.fromtimestamp(stats.st_mtime)
-		
-		# Ensure both project and master indexes exist in our dictionary
-		if project not in project_indexes:
-			project_indexes[project] = []
-		if MASTER_PROJECT not in project_indexes:
-			project_indexes[MASTER_PROJECT] = []
-		
-		# Check if file is already indexed in the project index
-		project_docs = project_indexes[project]
-		existing_docs = [doc for doc in project_docs 
-					   if doc.metadata.get('file_path') == rel_path and
-						  doc.metadata.get('last_modified') == modified_time.isoformat()]
-		
-		if existing_docs:
-			print(f"File already indexed in project '{project}': {rel_path}")
-			return
-		
-		# Check if file is already indexed in master (if project is not master)
-		if project != MASTER_PROJECT:
-			master_docs = project_indexes[MASTER_PROJECT]
-			existing_master_docs = [doc for doc in master_docs 
-							   if doc.metadata.get('file_path') == rel_path and
-								  doc.metadata.get('last_modified') == modified_time.isoformat()]
-			
-			if existing_master_docs:
-				print(f"File already indexed in master: {rel_path}")
-				# Only need to update the project index in this case
-				project_docs.extend(existing_master_docs)
-				return
-		
-		# Remove any old versions of this file from both indexes
-		project_indexes[project] = [doc for doc in project_indexes[project] 
-								  if doc.metadata.get('file_path') != rel_path]
-		
-		if project != MASTER_PROJECT:
-			project_indexes[MASTER_PROJECT] = [doc for doc in project_indexes[MASTER_PROJECT] 
-											if doc.metadata.get('file_path') != rel_path]
-		
-		print(f"Indexing: {rel_path} (project: {project})")
-		
-		# Get the embedding provider for this project
+		# Create the embedding provider
 		embedding_provider = get_embedding_provider(
 			project_dir=project, 
 			document_dir=document_dir, 
@@ -315,55 +318,46 @@ def index_file(file_path: str, project_dir: str, document_dir: str,
 			debug=debug
 		)
 		
-		if debug:
-			print(f"[DEBUG] Using embedding model: {embedding_provider.config.model_name} "
-				  f"(type: {embedding_provider.config.embedding_type})")
-		
-		# Use paragraph-based chunking with overlap
-		chunks = create_paragraph_chunks(content, max_chunk_size, debug)
-		print(f"  Split into {len(chunks)} chunks")
-		
-		# Store new document chunks
-		new_docs = []
-		
-		for i, chunk in enumerate(chunks):
-			print(f"  Processing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
+		# Call the new function that takes a provider
+		index_file_with_provider(
+			file_path, 
+			project, 
+			document_dir, 
+			project_indexes, 
+			max_chunk_size, 
+			embedding_provider,
+			embedding_config,
+			debug
+		)
+
+
+def estimate_total_chunks(files: List[str], max_chunk_size: int, debug: bool = False) -> int:
+	"""
+	Estimate the total number of chunks across all files to be indexed.
+	This is used for progress tracking.
+	"""
+	total_chunks = 0
+	for file_path in files:
+		try:
+			with open(file_path, 'r', encoding='utf-8') as f:
+				content = f.read()
 			
-			# Get paragraph info for this chunk
-			paragraphs = split_into_paragraphs(chunk)
+			# Quickly estimate number of chunks
+			estimated_chunks = max(1, len(content) // (max_chunk_size // 2))
+			# Apply cap of MAX_CHUNKS per file
+			total_chunks += min(estimated_chunks, MAX_CHUNKS)
 			
-			metadata = {
-				'file_path': rel_path,
-				'file_name': file_name,
-				'project': project,
-				'embedding_model': embedding_provider.config.model_name,
-				'embedding_type': embedding_provider.config.embedding_type,
-				'chunk_index': i,
-				'total_chunks': len(chunks),
-				'chunk_size': len(chunk),
-				'paragraphs': len(paragraphs),
-				'last_modified': modified_time.isoformat()
-			}
+			if debug:
+				file_name = os.path.basename(file_path)
+				print(f"[DEBUG] Estimated {estimated_chunks} chunks for {file_name}")
+				
+		except Exception as e:
+			if debug:
+				print(f"[DEBUG] Error estimating chunks for {file_path}: {e}")
+			# Default conservative estimate
+			total_chunks += 1
 			
-			# Generate embedding for the chunk
-			embedding = embedding_provider.create_embedding(chunk)
-			
-			if embedding:
-				doc = Document(content=chunk, metadata=metadata, embedding=embedding)
-				new_docs.append(doc)
-				print(f"  Successfully indexed chunk {i+1}/{len(chunks)}")
-			else:
-				print(f"  Failed to generate embedding for chunk {i+1}")
-		
-		# Add the new documents to both the project index and master index (if different)
-		project_indexes[project].extend(new_docs)
-		if project != MASTER_PROJECT:
-			project_indexes[MASTER_PROJECT].extend(new_docs)
-			
-	except Exception as e:
-		print(f"Error indexing file {file_path}: {e}")
-		if debug:
-			print(traceback.format_exc())
+	return total_chunks
 
 
 def discover_projects(document_dir: str) -> List[str]:
@@ -383,9 +377,19 @@ def discover_projects(document_dir: str) -> List[str]:
 		return [MASTER_PROJECT]  # Return at least the master project
 
 
+def get_project_embedding_config(project: str, document_dir: str, debug: bool = False) -> Optional[EmbeddingConfig]:
+	"""Get project-specific embedding configuration if available."""
+	try:
+		return load_project_config(project, document_dir)
+	except Exception as e:
+		if debug:
+			print(f"[DEBUG] Error loading project config for {project}: {e}")
+		return None
+
+
 def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
-					embedding_config: Optional[EmbeddingConfig] = None,
-					project: Optional[str] = None, debug: bool = False) -> None:
+						embedding_config: Optional[EmbeddingConfig] = None,
+						project: Optional[str] = None, debug: bool = False) -> None:
 	"""
 	Index all supported documents in the specified directory.
 	Can be limited to a specific project (subdirectory).
@@ -399,10 +403,33 @@ def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
 	# Dictionary to hold indexes for each project
 	project_indexes = {}
 	
+	# Dictionary to hold embedding providers for each project (to reuse them)
+	embedding_providers = {}
+	
 	# Load existing indexes for each project
 	for proj in projects:
 		index_path, backup_dir = get_index_path(index_dir, proj)
 		project_indexes[proj] = load_index(index_path, backup_dir, debug)
+		
+		# Initialize embedding provider for this project
+		if proj not in embedding_providers:
+			if debug:
+				print(f"[DEBUG] Initializing embedding provider for project: {proj}")
+			
+			proj_embedding_config = embedding_config
+			if proj_embedding_config is None:
+				proj_embedding_config = get_project_embedding_config(proj, document_dir, debug)
+			
+			embedding_providers[proj] = get_embedding_provider(
+				project_dir=proj, 
+				document_dir=document_dir, 
+				config=proj_embedding_config,
+				debug=debug
+			)
+			
+			if debug:
+				print(f"[DEBUG] Embedding provider initialized for {proj}: "
+					  f"{embedding_providers[proj].config.embedding_type}/{embedding_providers[proj].config.model_name}")
 	
 	# Find all files to process
 	if project and project != MASTER_PROJECT:
@@ -424,12 +451,46 @@ def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
 	# Sort files by size (smallest first) to get some quick wins
 	files = sorted(files, key=os.path.getsize)
 	
+	# Get accurate chunk count instead of estimation
+	total_chunks = get_accurate_chunk_count(files, max_chunk_size, debug)
+	print(f"Total chunks to index: {total_chunks}")
+	
+	# Track files where indexing was aborted due to MAX_CHUNKS limit
+	aborted_files = set()
+	
+	# Create progress bar for all chunks with improved settings
+	chunk_pbar = tqdm(total=total_chunks, desc="Total Progress", unit="chunk", 
+				 mininterval=0.1, maxinterval=1.0, position=1, leave=True)
+	
+	# Create a file info line above the progress bar
+	file_info = tqdm(total=0, bar_format='{desc}', position=0, leave=True)
+	
+	# Process each file
 	for i, file_path in enumerate(files, 1):
-		print(f"\nProcessing file {i}/{len(files)}: {file_path}")
+		rel_path = os.path.relpath(file_path, document_dir)
+		# Update file info line (above the chunk progress bar)
+		file_info.set_description_str(f"Processing: {rel_path} ({i}/{len(files)})")
+		
 		try:
-			# Process the file
-			index_file(file_path, project or MASTER_PROJECT, document_dir, 
-					   project_indexes, max_chunk_size, embedding_config, debug)
+			# Get file's project
+			file_project = get_project_path(file_path, document_dir)
+			
+			# Process the file using the project's embedding provider
+			chunks_reached_limit = index_file_with_provider(
+				file_path, 
+				file_project, 
+				document_dir, 
+				project_indexes, 
+				max_chunk_size, 
+				embedding_providers[file_project],  # Pass the provider directly
+				embedding_config,
+				debug,
+				chunk_pbar  # Pass the progress bar
+			)
+			
+			# Track files that hit the MAX_CHUNKS limit
+			if chunks_reached_limit:
+				aborted_files.add(rel_path)
 			
 			# Save project indexes after each file
 			for proj, docs in project_indexes.items():
@@ -441,15 +502,172 @@ def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
 			gc.collect()
 			
 		except Exception as e:
-			print(f"Failed to process {file_path}: {e}")
+			print(f"\nFailed to process {rel_path}: {e}")
 			if debug:
 				print(traceback.format_exc())
+	
+	# Close the progress bars
+	file_info.close()
+	chunk_pbar.close()
+	
+	# Report files where indexing was aborted
+	if aborted_files:
+		print("\nThe following files reached the maximum chunk limit and were partially indexed:")
+		for file_path in sorted(aborted_files):
+			print(f"  - {file_path}")
 	
 	# Print summary
 	print("\nIndexing Summary:")
 	for proj, docs in project_indexes.items():
 		print(f"Project '{proj}': {len(docs)} document chunks")
 
+
+def index_file_with_provider(file_path: str, project: str, document_dir: str, 
+									project_indexes: Dict[str, List[Document]], 
+									max_chunk_size: int, 
+									embedding_provider, # Direct provider instance
+									embedding_config: Optional[EmbeddingConfig] = None,
+									debug: bool = False,
+									progress_bar=None) -> bool:
+	"""
+	Index a single file using a pre-initialized embedding provider.
+	Updates both the project-specific index and the master index.
+	Returns True if the MAX_CHUNKS limit was reached during processing.
+	"""
+	chunks_reached_limit = False
+	
+	try:
+		with open(file_path, 'r', encoding='utf-8') as f:
+			content = f.read()
+		
+		rel_path = os.path.relpath(file_path, document_dir)
+		file_name = os.path.basename(file_path)
+		file_size = os.path.getsize(file_path)
+		
+		if debug:
+			print(f"[DEBUG] Processing file: {rel_path} (project: {project}, size: {file_size} bytes)")
+		
+		# Get file stats
+		stats = os.stat(file_path)
+		modified_time = datetime.fromtimestamp(stats.st_mtime)
+		
+		# Ensure both project and master indexes exist in our dictionary
+		if project not in project_indexes:
+			project_indexes[project] = []
+		if MASTER_PROJECT not in project_indexes:
+			project_indexes[MASTER_PROJECT] = []
+		
+		# Check if file is already indexed in the project index
+		project_docs = project_indexes[project]
+		existing_docs = [doc for doc in project_docs 
+					   if doc.metadata.get('file_path') == rel_path and
+						  doc.metadata.get('last_modified') == modified_time.isoformat()]
+		
+		if existing_docs:
+			if debug:
+				print(f"File already indexed in project '{project}': {rel_path}")
+			# Update the progress bar for the chunks we're skipping
+			if progress_bar:
+				progress_bar.update(len(existing_docs))
+			return False
+		
+		# Check if file is already indexed in master (if project is not master)
+		if project != MASTER_PROJECT:
+			master_docs = project_indexes[MASTER_PROJECT]
+			existing_master_docs = [doc for doc in master_docs 
+							   if doc.metadata.get('file_path') == rel_path and
+								  doc.metadata.get('last_modified') == modified_time.isoformat()]
+			
+			if existing_master_docs:
+				print(f"File already indexed in master: {rel_path}")
+				# Only need to update the project index in this case
+				project_docs.extend(existing_master_docs)
+				# Update the progress bar for the chunks we're skipping
+				if progress_bar:
+					progress_bar.update(len(existing_master_docs))
+				return False
+		
+		# Remove any old versions of this file from both indexes
+		project_indexes[project] = [doc for doc in project_indexes[project] 
+								  if doc.metadata.get('file_path') != rel_path]
+		
+		if project != MASTER_PROJECT:
+			project_indexes[MASTER_PROJECT] = [doc for doc in project_indexes[MASTER_PROJECT] 
+											if doc.metadata.get('file_path') != rel_path]
+		
+		if debug:
+			print(f"Indexing: {rel_path} (project: {project})")
+		# else:
+			print(f"[DEBUG] Using embedding model: {embedding_provider.config.model_name} "
+				  f"(type: {embedding_provider.config.embedding_type})")
+		
+		# Use paragraph-based chunking with overlap
+		chunks = create_paragraph_chunks(content, max_chunk_size, debug)
+		
+		# Check if we reached the MAX_CHUNKS limit
+		if len(chunks) >= MAX_CHUNKS:
+			chunks_reached_limit = True
+		
+		# Filter out chunks that are too small
+		original_chunk_count = len(chunks)
+		chunks = [chunk for chunk in chunks if len(chunk) >= MIN_CHUNK_SIZE]
+		
+		if debug:
+			print(f"  Split into {len(chunks)} chunks (removed {original_chunk_count - len(chunks)} chunks below MIN_CHUNK_SIZE)")
+		
+		# Store new document chunks
+		new_docs = []
+		
+		for i, chunk in enumerate(chunks):
+			if debug:
+				print(f"  Processing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
+			
+			# Get paragraph info for this chunk
+			paragraphs = split_into_paragraphs(chunk)
+			
+			metadata = {
+				'file_path': rel_path,
+				'file_name': file_name,
+				'project': project,
+				'embedding_model': embedding_provider.config.model_name,
+				'embedding_type': embedding_provider.config.embedding_type,
+				'chunk_index': i,
+				'total_chunks': len(chunks),
+				'chunk_size': len(chunk),
+				'paragraphs': len(paragraphs),
+				'last_modified': modified_time.isoformat()
+			}
+			
+			# Generate embedding for the chunk using the provided embedder
+			embedding = embedding_provider.create_embedding(chunk)
+			
+			if embedding:
+				doc = Document(content=chunk, metadata=metadata, embedding=embedding)
+				new_docs.append(doc)
+				if debug:
+					print(f"  Successfully indexed chunk {i+1}/{len(chunks)}")
+				# Update the progress bar
+				if progress_bar:
+					progress_bar.update(1)
+			else:
+				if debug or progress_bar is None:
+					print(f"  Failed to generate embedding for chunk {i+1}")
+				# Still update the progress bar even if embedding failed
+				if progress_bar:
+					progress_bar.update(1)
+		
+		# Add the new documents to both the project index and master index (if different)
+		project_indexes[project].extend(new_docs)
+		if project != MASTER_PROJECT:
+			project_indexes[MASTER_PROJECT].extend(new_docs)
+			
+		return chunks_reached_limit
+		
+	except Exception as e:
+		print(f"Error indexing file {file_path}: {e}")
+		if debug:
+			print(traceback.format_exc())
+		return False
 
 def main():
 	"""Main entry point for the indexer application."""
@@ -465,6 +683,8 @@ def main():
 						help="Embedding model to use")
 	parser.add_argument("--max-chunk-size", type=int, default=MAX_CHUNK_SIZE,
 						help="Maximum size of document chunks in characters")
+	parser.add_argument("--min-chunk-size", type=int, default=MIN_CHUNK_SIZE,
+						help="Minimum size of document chunks in characters to be indexed")
 	parser.add_argument("--debug", action="store_true",
 						help="Enable debug logging")
 	parser.add_argument("--file", type=str,
@@ -509,7 +729,11 @@ def main():
 		print(f"Embedding type: {embedding_config.embedding_type}")
 		print(f"Embedding model: {embedding_config.model_name}")
 	print(f"Max chunk size: {args.max_chunk_size} characters")
+	print(f"Min chunk size: {args.min_chunk_size} characters")
 	print(f"Index directory: {args.index_dir}")
+	
+	# Track files where indexing was aborted due to MAX_CHUNKS limit
+	aborted_files = set()
 	
 	if args.file:
 		# Index a single file
@@ -528,16 +752,46 @@ def main():
 			index_path, backup_dir = get_index_path(args.index_dir, proj)
 			project_indexes[proj] = load_index(index_path, backup_dir, args.debug)
 		
-		# Index the file
-		index_file(args.file, project, args.document_dir, 
-				   project_indexes, args.max_chunk_size, embedding_config, args.debug)
+		# Get accurate chunk count for this file
+		rel_path = os.path.relpath(args.file, args.document_dir)
+		print(f"Preparing to index: {rel_path}")
+		
+		with open(args.file, 'r', encoding='utf-8') as f:
+			content = f.read()
+		chunks = create_paragraph_chunks(content, args.max_chunk_size, args.debug)
+		chunks = [chunk for chunk in chunks if len(chunk) >= args.min_chunk_size]
+		
+		# Create file info line and progress bar on separate lines
+		file_info = tqdm(total=0, bar_format='{desc}', position=0, leave=True)
+		file_info.set_description_str(f"Processing: {rel_path}")
+		
+		# Create progress bar for this file with improved settings
+		with tqdm(total=len(chunks), desc="Indexing", unit="chunk", 
+			mininterval=0.1, maxinterval=1.0, position=1, leave=True) as pbar:
+			# Index the file
+			result = index_file_with_provider(
+				args.file, 
+				project, 
+				args.document_dir, 
+				project_indexes, 
+				args.max_chunk_size, 
+				get_embedding_provider(project, args.document_dir, embedding_config, args.debug),
+				embedding_config, 
+				args.debug,
+				pbar
+			)
+			
+			if result:
+				aborted_files.add(rel_path)
+	
+		# Close the file info line
+		file_info.close()
 		
 		# Save indexes
 		for proj, docs in project_indexes.items():
 			if docs:  # Only save if there are documents
 				index_path, backup_dir = get_index_path(args.index_dir, proj)
-				save_index(docs, index_path, backup_dir, args.debug)
-		
+				save_index(docs, index_path, backup_dir, args.debug)		
 	else:
 		# Index a directory
 		if not os.path.exists(args.document_dir):
@@ -556,6 +810,12 @@ def main():
 			print(f"Indexing all documents")
 			index_directory(args.document_dir, args.index_dir, args.max_chunk_size,
 						   embedding_config, None, args.debug)
+	
+	# Report files where indexing was aborted
+	if aborted_files:
+		print("\nThe following files reached the maximum chunk limit and were partially indexed:")
+		for file_path in sorted(aborted_files):
+			print(f"  - {file_path}")
 	
 	print("\nIndexing complete")
 
