@@ -51,6 +51,7 @@ os.environ["MPS_FALLBACK_POLICY"] = "0"
 # LOCAL_MODEL = "orca-2-7b"  # Default local model, can be changed via CLI
 
 
+
 import anthropic
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -83,7 +84,7 @@ DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 DEFAULT_EMBEDDING_TYPE = "sentence_transformers"
-TOP_K_DOCUMENTS = 3
+TOP_K_DOCUMENTS = 5
 API_TIMEOUT = 60  # Timeout for API calls in seconds
 MASTER_PROJECT = "master"  # Name for the master index
 PROMPTS_DIR = "prompts"  # Directory to save prompt logs
@@ -515,16 +516,34 @@ def index_project(project: str, document_dir: str, index_dir: str,
 		return False
 
 
+
+
+
+
+
+
 def search_documents(query: str, documents: List[Document], project: str, 
-					 document_dir: str, embedding_config: Optional[EmbeddingConfig] = None,
-					 top_k: int = TOP_K_DOCUMENTS, debug: bool = False) -> List[Document]:
-	"""Search for documents relevant to the query."""
+				 document_dir: str, embedding_config: Optional[EmbeddingConfig] = None,
+				 top_k: int = TOP_K_DOCUMENTS, debug: bool = False) -> List[Document]:
+	"""
+	Search for top-k distinct documents relevant to the query.
+	Documents are ranked by semantic similarity, but only one chunk per distinct document is returned.
+	"""
 	if not documents:
 		print_system("No documents in index")
 		return []
 	
 	if debug:
 		print_debug(f"Searching for: '{query}'")
+	
+	# Try to import tqdm for progress bar
+	try:
+		from tqdm import tqdm
+		has_tqdm = True
+	except ImportError:
+		has_tqdm = False
+		if not debug:
+			print_system("For progress bars, install tqdm: pip install tqdm")
 	
 	# Group documents by embedding model/type
 	document_groups = {}
@@ -560,16 +579,29 @@ def search_documents(query: str, documents: List[Document], project: str,
 		# First, try to search documents with matching embedding type/model
 		if base_key in document_groups:
 			start_time = time.time()
+			
+			# Create query embedding
+			print_system("Creating query embedding...")
 			query_embedding = embedding_provider.create_embedding(query)
 			search_time = time.time() - start_time
 			
 			if debug:
 				print_debug(f"Created query embedding in {search_time:.2f} seconds")
 				print_debug(f"Searching {len(document_groups[base_key])} documents with matching embedding model")
+			else:
+				print_system(f"Created embedding in {search_time:.2f}s. Calculating document similarity...")
 			
-			# Calculate similarities for the base model group
+			# Calculate similarities for the base model group with progress bar
+			base_docs = document_groups[base_key]
+			
+			# Create iterator with progress bar if tqdm is available
+			if has_tqdm and not debug and len(base_docs) > 10:
+				base_docs_iter = tqdm(base_docs, desc="Searching documents", unit="doc")
+			else:
+				base_docs_iter = base_docs
+			
 			base_similarities = []
-			for doc in document_groups[base_key]:
+			for doc in base_docs_iter:
 				if doc.embedding:
 					# Calculate cosine similarity
 					sim = cosine_similarity(
@@ -605,9 +637,14 @@ def search_documents(query: str, documents: List[Document], project: str,
 					if debug:
 						print_debug(f"Created query embedding with {model_name} in {search_time:.2f} seconds")
 					
-					# Calculate similarities
+					# Calculate similarities with progress bar
+					if has_tqdm and not debug and len(docs) > 10:
+						docs_iter = tqdm(docs, desc=f"Searching {model_name}", unit="doc")
+					else:
+						docs_iter = docs
+					
 					other_similarities = []
-					for doc in docs:
+					for doc in docs_iter:
 						if doc.embedding:
 							sim = cosine_similarity(
 								[temp_query_embedding], 
@@ -617,14 +654,33 @@ def search_documents(query: str, documents: List[Document], project: str,
 					
 					all_results.extend(other_similarities)
 		
-		# Sort all results by similarity and take top k
+		# Sort all results by similarity score
 		sorted_results = sorted(all_results, key=lambda x: x[1], reverse=True)
-		top_results = [doc for doc, sim in sorted_results[:top_k]]
+		
+		# Extract only the top-k DISTINCT documents by file path
+		top_distinct_results = []
+		distinct_files = set()
+		
+		for doc, sim in sorted_results:
+			# Get a unique identifier for this document (file path is a good choice)
+			file_path = doc.metadata.get('file_path', 'unknown')
+			
+			# Only add if we haven't seen this file yet
+			if file_path not in distinct_files:
+				top_distinct_results.append((doc, sim))
+				distinct_files.add(file_path)
+				
+				# Break once we have top_k distinct documents
+				if len(top_distinct_results) >= top_k:
+					break
+		
+		# Just get the documents without the scores
+		top_results = [doc for doc, sim in top_distinct_results]
 		
 		# In debug mode, print details about the relevant documents
 		if debug:
-			print_debug(f"Found {len(top_results)} relevant documents:")
-			for i, (doc, sim) in enumerate(sorted_results[:top_k]):
+			print_debug(f"Found {len(top_results)} distinct relevant documents:")
+			for i, (doc, sim) in enumerate(top_distinct_results):
 				proj = doc.metadata.get('project', MASTER_PROJECT)
 				file_path = doc.metadata.get('file_path', 'unknown')
 				file_name = doc.metadata.get('file_name', 'unknown')
@@ -640,6 +696,27 @@ def search_documents(query: str, documents: List[Document], project: str,
 				print_debug(f"  Embedding Model: {emb_model}")
 				print_debug(f"  Content Preview: {doc.content[:100]}...")
 				print()
+		else:
+			# For regular users, show a neat summary of discovered documents
+			if top_results:
+				print_system(f"\nFound {len(top_results)} relevant sources:")
+				for i, (doc, sim) in enumerate(top_distinct_results):
+					file_path = doc.metadata.get('file_path', 'unknown')
+					
+					# Get just the filename from the path
+					file_name = os.path.basename(file_path)
+					
+					# Get project if different from current
+					doc_project = doc.metadata.get('project', MASTER_PROJECT)
+					project_info = f" (project: {doc_project})" if doc_project != project and doc_project != MASTER_PROJECT else ""
+					
+					# Format the similarity score as percentage
+					score_percent = int(sim * 100)
+					
+					# Print a clean summary line
+					print_system(f"  {i+1}. {HIGHLIGHT_COLOR}{file_name}{RESET_COLOR}{SYSTEM_COLOR} - {score_percent}% match{project_info}")
+			else:
+				print_system("No relevant documents found in the index.")
 		
 		return top_results
 		
@@ -649,7 +726,8 @@ def search_documents(query: str, documents: List[Document], project: str,
 			print(traceback.format_exc())
 		return []
 
-
+	
+	
 def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project: str, debug: bool = False, prompts_dir: str = PROMPTS_DIR) -> str:
 	"""Process a user query and return Claude's response."""
 	try:
@@ -1471,28 +1549,37 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				print()
 				print_system("Searching for relevant documents...")
 				
-			relevant_docs = search_documents(
-				query, current_documents, current_project, 
-				document_dir, current_embedding_config, debug=debug
-			)
-			
-			# Ask the selected LLM
-			# Get the model name based on current LLM type
-			model_name = None
-			if current_llm_type == LLM_LOCAL:
-				model_name = current_local_model
-			elif current_llm_type == LLM_HF:
-				model_name = current_hf_model
-			
-			# Ask the selected LLM
-			answer = get_response(
-				query, relevant_docs, api_key, current_project,
-				current_llm_type, model_name, debug, prompts_dir
-			)
-			
-			# Print the answer with proper colors
-			print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
-			print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
+				relevant_docs = search_documents(
+					query, current_documents, current_project, 
+					document_dir, current_embedding_config, debug=debug
+				)
+				
+				# If we found relevant documents and not in debug mode, confirm before querying
+				if relevant_docs and not debug:
+					proceed = input(f"{SYSTEM_COLOR}Proceed with query using these sources? (Y/n): {RESET_COLOR}").strip().lower()
+					if proceed == 'n':
+						print_system("Query canceled")
+						continue
+				
+				# Get the model name based on current LLM type
+				model_name = None
+				if current_llm_type == LLM_LOCAL:
+					model_name = current_local_model
+				elif current_llm_type == LLM_HF:
+					model_name = current_hf_model
+				
+				# Ask the selected LLM
+				print_system(f"Generating answer with {current_llm_type} {model_name} ...")
+				answer = get_response(
+					query, relevant_docs, api_key, current_project,
+					current_llm_type, model_name, debug, prompts_dir
+				)
+				
+				# Print the answer with proper colors
+				print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
+				print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")		
+						
+
 		except KeyboardInterrupt:
 			print_system("\nInterrupted by user. Exiting...")
 			break
@@ -1829,6 +1916,7 @@ def main():
 			print_debug(f"  {key}: {count} documents")
 	
 	# In the main function:
+	# In the main function:
 	if args.query:
 		# Single query mode
 		# Echo the query
@@ -1840,6 +1928,13 @@ def main():
 			args.document_dir, embedding_config, debug=args.debug
 		)
 		
+		# If we found relevant documents, confirm before querying
+		if relevant_docs and not args.debug:
+			proceed = input(f"{SYSTEM_COLOR}Proceed with query using these sources? (Y/n): {RESET_COLOR}").strip().lower()
+			if proceed == 'n':
+				print_system("Query canceled")
+				sys.exit(0)
+		
 		# Determine the model name based on LLM type
 		model_name = None
 		if args.llm == LLM_LOCAL:
@@ -1848,6 +1943,7 @@ def main():
 			model_name = args.hf_model
 		
 		# Use the selected LLM
+		print_system(f"Generating answer with {args.llm} {model_name} ...")
 		answer = get_response(
 			args.query, relevant_docs, api_key, args.project,
 			args.llm, model_name, args.debug, prompts_dir
@@ -1855,7 +1951,8 @@ def main():
 		
 		# Print the answer with proper colors
 		print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
-		print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
+		print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")	
+	
 	else:
 		# Interactive mode
 		interactive_mode(
