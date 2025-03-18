@@ -4,7 +4,7 @@ Document Indexer for RAG Applications with Project Support
 
 This tool:
 1. Indexes documents from a local directory
-2. Creates embeddings using sentence-transformers
+2. Creates embeddings using the configurable embedding library
 3. Supports project-based indexing (subdirectories as separate projects)
 4. Saves separate indexes for each project and a master index
 """
@@ -24,25 +24,16 @@ from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 from pathlib import Path
 
+# Import our custom embedding library
+from embeddings import EmbeddingConfig, get_embedding_provider, load_project_config
+
 # Filter resource tracker warnings
 warnings.filterwarnings("ignore", message="resource_tracker")
-
-# Force CPU usage instead of Metal on MacOS
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-os.environ["MPS_FALLBACK_POLICY"] = "0"
-os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Disable CUDA
-
-# Set threading options
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Constants
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
-MAX_CHUNK_SIZE = 512  # Characters
-DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+MAX_CHUNK_SIZE = 1500  # Characters
 MASTER_PROJECT = "master"  # Name for the master index
 
 
@@ -58,66 +49,12 @@ class Document:
 		self.embedding = embedding
 
 
-def get_embedding_model(model_name: str, debug: bool = False):
-	"""Load and return the embedding model."""
-	try:
-		# Import here to ensure environment variables take effect
-		import torch
-		from sentence_transformers import SentenceTransformer
-		
-		if debug:
-			print(f"[DEBUG] PyTorch version: {torch.__version__}")
-			print(f"[DEBUG] Loading model: {model_name} on CPU")
-		
-		# Force CPU
-		model = SentenceTransformer(model_name, device="cpu")
-		
-		if debug:
-			print(f"[DEBUG] Model loaded successfully")
-			
-		return model
-	except ImportError as e:
-		print(f"Error: Required package not installed - {e}")
-		print("Please install with: pip install sentence-transformers torch")
-		sys.exit(1)
-	except Exception as e:
-		print(f"Error loading model: {e}")
-		if debug:
-			print(traceback.format_exc())
-		sys.exit(1)
-
-
-def create_embedding(model, text: str, debug: bool = False) -> List[float]:
-	"""Generate an embedding for the given text."""
-	if debug:
-		print(f"[DEBUG] Generating embedding for text of length {len(text)}")
-	
-	try:
-		import torch
-		with torch.no_grad():
-			# Process a single item, no batching
-			embedding = model.encode(
-				text,
-				convert_to_numpy=True,
-				show_progress_bar=False,
-				batch_size=1
-			).tolist()
-		
-		if debug:
-			print(f"[DEBUG] Generated embedding with dimension {len(embedding)}")
-			
-		return embedding
-	except Exception as e:
-		print(f"Error generating embedding: {e}")
-		if debug:
-			print(traceback.format_exc())
-		return []
-
-
 def split_into_paragraphs(text: str) -> List[str]:
 	"""Split text into paragraphs based on double newlines."""
 	# Handle different line ending styles
 	text = text.replace('\r\n', '\n')
+	text = text.replace('\n', '\n\n')
+	text = text.replace('\n\n\n', '\n\n')
 	
 	# Split on paragraph breaks (double newlines)
 	paragraphs = text.split('\n\n')
@@ -203,7 +140,7 @@ def create_paragraph_chunks(text: str, max_chunk_size: int, debug: bool = False)
 		current_chunk.append(paragraph)
 		current_size = new_size
 		i += 1
-		
+	
 	# Don't forget to save the last chunk if there's anything left
 	if current_chunk:
 		chunks.append('\n\n'.join(current_chunk))
@@ -298,8 +235,10 @@ def save_index(documents: List[Document], index_path: str, backup_dir: str, debu
 		print(f"Error saving index: {e}")
 
 
-def index_file(file_path: str, model, document_dir: str, project_indexes: Dict[str, List[Document]], 
-			   max_chunk_size: int, debug: bool = False) -> None:
+def index_file(file_path: str, project_dir: str, document_dir: str, 
+			   project_indexes: Dict[str, List[Document]], 
+			   max_chunk_size: int, embedding_config: Optional[EmbeddingConfig] = None,
+			   debug: bool = False) -> None:
 	"""
 	Index a single file by creating paragraph-based chunks with overlap and generating embeddings.
 	Updates both the project-specific index and the master index.
@@ -361,6 +300,18 @@ def index_file(file_path: str, model, document_dir: str, project_indexes: Dict[s
 		
 		print(f"Indexing: {rel_path} (project: {project})")
 		
+		# Get the embedding provider for this project
+		embedding_provider = get_embedding_provider(
+			project_dir=project, 
+			document_dir=document_dir, 
+			config=embedding_config,
+			debug=debug
+		)
+		
+		if debug:
+			print(f"[DEBUG] Using embedding model: {embedding_provider.config.model_name} "
+				  f"(type: {embedding_provider.config.embedding_type})")
+		
 		# Use paragraph-based chunking with overlap
 		chunks = create_paragraph_chunks(content, max_chunk_size, debug)
 		print(f"  Split into {len(chunks)} chunks")
@@ -377,8 +328,9 @@ def index_file(file_path: str, model, document_dir: str, project_indexes: Dict[s
 			metadata = {
 				'file_path': rel_path,
 				'file_name': file_name,
-				'document_name': os.path.splitext(file_name)[0],  # File name without extension
 				'project': project,
+				'embedding_model': embedding_provider.config.model_name,
+				'embedding_type': embedding_provider.config.embedding_type,
 				'chunk_index': i,
 				'total_chunks': len(chunks),
 				'chunk_size': len(chunk),
@@ -387,7 +339,7 @@ def index_file(file_path: str, model, document_dir: str, project_indexes: Dict[s
 			}
 			
 			# Generate embedding for the chunk
-			embedding = create_embedding(model, chunk, debug)
+			embedding = embedding_provider.create_embedding(chunk)
 			
 			if embedding:
 				doc = Document(content=chunk, metadata=metadata, embedding=embedding)
@@ -424,7 +376,8 @@ def discover_projects(document_dir: str) -> List[str]:
 		return [MASTER_PROJECT]  # Return at least the master project
 
 
-def index_directory(document_dir: str, index_dir: str, model, max_chunk_size: int, 
+def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
+					embedding_config: Optional[EmbeddingConfig] = None,
 					project: Optional[str] = None, debug: bool = False) -> None:
 	"""
 	Index all supported documents in the specified directory.
@@ -464,14 +417,12 @@ def index_directory(document_dir: str, index_dir: str, model, max_chunk_size: in
 	# Sort files by size (smallest first) to get some quick wins
 	files = sorted(files, key=os.path.getsize)
 	
-	import torch
-	torch.set_grad_enabled(False)  # Ensure no gradients are computed
-	
 	for i, file_path in enumerate(files, 1):
 		print(f"\nProcessing file {i}/{len(files)}: {file_path}")
 		try:
 			# Process the file
-			index_file(file_path, model, document_dir, project_indexes, max_chunk_size, debug)
+			index_file(file_path, project or MASTER_PROJECT, document_dir, 
+					   project_indexes, max_chunk_size, embedding_config, debug)
 			
 			# Save project indexes after each file
 			for proj, docs in project_indexes.items():
@@ -501,8 +452,10 @@ def main():
 						help="Directory to store the document index")
 	parser.add_argument("--document-dir", type=str, default=DEFAULT_DOCUMENT_DIR, 
 						help="Directory containing documents to index")
-	parser.add_argument("--embedding-model", type=str, default=DEFAULT_EMBEDDING_MODEL,
-						help="Sentence Transformer model to use for embeddings")
+	parser.add_argument("--embedding-type", type=str, default="sentence_transformers",
+						help="Type of embedding to use (sentence_transformers, openai)")
+	parser.add_argument("--embedding-model", type=str, 
+						help="Embedding model to use")
 	parser.add_argument("--max-chunk-size", type=int, default=MAX_CHUNK_SIZE,
 						help="Maximum size of document chunks in characters")
 	parser.add_argument("--debug", action="store_true",
@@ -536,14 +489,20 @@ def main():
 			print(f"  {project} ({status})")
 		return
 	
+	# Create embedding configuration from command line args
+	embedding_config = None
+	if args.embedding_model or args.embedding_type:
+		embedding_config = EmbeddingConfig(
+			embedding_type=args.embedding_type,
+			model_name=args.embedding_model
+		)
+	
 	print(f"Document Indexer with Project Support")
-	print(f"Embedding model: {args.embedding_model}")
+	if embedding_config:
+		print(f"Embedding type: {embedding_config.embedding_type}")
+		print(f"Embedding model: {embedding_config.model_name}")
 	print(f"Max chunk size: {args.max_chunk_size} characters")
 	print(f"Index directory: {args.index_dir}")
-	
-	# Load embedding model
-	print("Loading embedding model...")
-	model = get_embedding_model(args.embedding_model, args.debug)
 	
 	if args.file:
 		# Index a single file
@@ -563,7 +522,8 @@ def main():
 			project_indexes[proj] = load_index(index_path, backup_dir, args.debug)
 		
 		# Index the file
-		index_file(args.file, model, args.document_dir, project_indexes, args.max_chunk_size, args.debug)
+		index_file(args.file, project, args.document_dir, 
+				   project_indexes, args.max_chunk_size, embedding_config, args.debug)
 		
 		# Save indexes
 		for proj, docs in project_indexes.items():
@@ -583,10 +543,12 @@ def main():
 				print(f"Error: Project directory not found: {project_dir}")
 				return
 			print(f"Indexing project: {args.project}")
-			index_directory(args.document_dir, args.index_dir, model, args.max_chunk_size, args.project, args.debug)
+			index_directory(args.document_dir, args.index_dir, args.max_chunk_size, 
+						   embedding_config, args.project, args.debug)
 		else:
 			print(f"Indexing all documents")
-			index_directory(args.document_dir, args.index_dir, model, args.max_chunk_size, None, args.debug)
+			index_directory(args.document_dir, args.index_dir, args.max_chunk_size,
+						   embedding_config, None, args.debug)
 	
 	print("\nIndexing complete")
 

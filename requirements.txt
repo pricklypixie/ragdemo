@@ -4,3 +4,24 @@ numpy>=1.20.0
 scikit-learn>=1.0.0
 sentence-transformers>=2.2.0
 torch>=1.9.0
+openai>=1.0.0
+colorama>=-0.4.6
+llm>=0.23
+llm-gpt4all>=0.4
+transformers
+torch
+
+
+# for PDF extraction
+
+pdf-extractor @ git+https://github.com/pricklypixie/pdf-extractor.git
+
+# pdfplumber
+# PyPDF2
+# pymupdf
+# transformers
+# torch
+# Pillow
+# protobuf
+# sentencepiece
+# pytesseract
