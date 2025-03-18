@@ -234,6 +234,80 @@ class CommandHistory:
 			"""Get the last n history entries."""
 			return self.entries[-n:] if n <= len(self.entries) else self.entries
 
+# class EmbeddingProviderCache:
+# 	"""Caches embedding providers to avoid reloading models."""
+# 	
+# 	def __init__(self, debug=False):
+# 		"""Initialize the cache."""
+# 		self.providers = {}  # {(project, embedding_type, model_name): provider}
+# 		self.debug = debug
+# 	
+# 	def get_provider(self, project, document_dir, config=None):
+# 		"""
+# 		Get an embedding provider from the cache or create a new one.
+# 		
+# 		Args:
+# 			project: Project name
+# 			document_dir: Base document directory
+# 			config: Optional EmbeddingConfig (loads from project if not provided)
+# 			
+# 		Returns:
+# 			An embedding provider
+# 		"""
+# 		# If no config provided, load from project
+# 		if config is None:
+# 			config_path = get_project_config_path(project, document_dir)
+# 			if os.path.exists(config_path):
+# 				try:
+# 					config = EmbeddingConfig.from_json_file(config_path)
+# 					if self.debug:
+# 						print_debug(f"Loaded embedding config from: {config_path}")
+# 				except Exception as e:
+# 					if self.debug:
+# 						print_debug(f"Error loading config from {config_path}: {e}")
+# 					# Use defaults
+# 					config = EmbeddingConfig(
+# 						embedding_type=DEFAULT_EMBEDDING_TYPE,
+# 						model_name=DEFAULT_EMBEDDING_MODEL
+# 					)
+# 			else:
+# 				# Use defaults
+# 				config = EmbeddingConfig(
+# 					embedding_type=DEFAULT_EMBEDDING_TYPE,
+# 					model_name=DEFAULT_EMBEDDING_MODEL
+# 				)
+# 		
+# 		# Create a cache key from the project and config
+# 		cache_key = (project, config.embedding_type, config.model_name)
+# 		
+# 		# Check if we already have this provider in the cache
+# 		if cache_key in self.providers:
+# 			if self.debug:
+# 				print_debug(f"Using cached embedding provider for {cache_key}")
+# 			return self.providers[cache_key]
+# 		
+# 		# Create a new provider
+# 		if self.debug:
+# 			print_debug(f"Creating new embedding provider for {cache_key}")
+# 		
+# 		provider = get_embedding_provider(
+# 			project_dir=project,
+# 			document_dir=document_dir,
+# 			config=config,
+# 			debug=self.debug
+# 		)
+# 		
+# 		# Store in cache
+# 		self.providers[cache_key] = provider
+# 		return provider
+# 	
+# 	def clear_cache(self):
+# 		"""Clear the provider cache."""
+# 		self.providers.clear()
+# 		if self.debug:
+# 			print_debug("Cleared embedding provider cache")
+
+
 class EmbeddingProviderCache:
 	"""Caches embedding providers to avoid reloading models."""
 	
@@ -241,6 +315,9 @@ class EmbeddingProviderCache:
 		"""Initialize the cache."""
 		self.providers = {}  # {(project, embedding_type, model_name): provider}
 		self.debug = debug
+		# Add a counter for cache hits/misses for debugging
+		self.hits = 0
+		self.misses = 0
 	
 	def get_provider(self, project, document_dir, config=None):
 		"""
@@ -283,13 +360,16 @@ class EmbeddingProviderCache:
 		# Check if we already have this provider in the cache
 		if cache_key in self.providers:
 			if self.debug:
-				print_debug(f"Using cached embedding provider for {cache_key}")
+				self.hits += 1
+				print_debug(f"Using cached embedding provider for {cache_key} (hits: {self.hits}, misses: {self.misses})")
 			return self.providers[cache_key]
 		
 		# Create a new provider
 		if self.debug:
-			print_debug(f"Creating new embedding provider for {cache_key}")
+			self.misses += 1
+			print_debug(f"Creating new embedding provider for {cache_key} (hits: {self.hits}, misses: {self.misses})")
 		
+		# Create the provider
 		provider = get_embedding_provider(
 			project_dir=project,
 			document_dir=document_dir,
@@ -297,15 +377,32 @@ class EmbeddingProviderCache:
 			debug=self.debug
 		)
 		
+		# Explicitly force loading the model now to ensure it's ready
+		# This can be slow the first time but then it's cached
+		if self.debug:
+			print_debug(f"Pre-loading model for {config.embedding_type}/{config.model_name}")
+		
+		# For SentenceTransformers, we need to explicitly call load_model
+		if hasattr(provider, 'load_model'):
+			provider.load_model()
+		# For other providers that lazy-load, try creating a simple embedding to force loading
+		else:
+			provider.create_embedding("Test loading the model")
+		
 		# Store in cache
 		self.providers[cache_key] = provider
 		return provider
 	
 	def clear_cache(self):
 		"""Clear the provider cache."""
+		old_count = len(self.providers)
 		self.providers.clear()
+		self.hits = 0
+		self.misses = 0
 		if self.debug:
-			print_debug("Cleared embedding provider cache")
+			print_debug(f"Cleared embedding provider cache ({old_count} providers removed)")
+
+
 
 def print_debug(message: str) -> None:
 	"""Print debug message in debug color."""
@@ -592,212 +689,6 @@ def index_project(project: str, document_dir: str, index_dir: str,
 
 
 
-
-
-
-# def search_documents(query: str, documents: List[Document], project: str, 
-# 				 document_dir: str, embedding_config: Optional[EmbeddingConfig] = None,
-# 				 top_k: int = TOP_K_DOCUMENTS, debug: bool = False) -> List[Document]:
-# 	"""
-# 	Search for top-k distinct documents relevant to the query.
-# 	Documents are ranked by semantic similarity, but only one chunk per distinct document is returned.
-# 	"""
-# 	if not documents:
-# 		print_system("No documents in index")
-# 		return []
-# 	
-# 	if debug:
-# 		print_debug(f"Searching for: '{query}'")
-# 	
-# 	# Try to import tqdm for progress bar
-# 	try:
-# 		from tqdm import tqdm
-# 		has_tqdm = True
-# 	except ImportError:
-# 		has_tqdm = False
-# 		if not debug:
-# 			print_system("For progress bars, install tqdm: pip install tqdm")
-# 	
-# 	# Group documents by embedding model/type
-# 	document_groups = {}
-# 	for doc in documents:
-# 		embedding_key = (
-# 			doc.metadata.get('embedding_type', 'sentence_transformers'),
-# 			doc.metadata.get('embedding_model', 'all-MiniLM-L6-v2')
-# 		)
-# 		if embedding_key not in document_groups:
-# 			document_groups[embedding_key] = []
-# 		document_groups[embedding_key].append(doc)
-# 	
-# 	# If no embedding config provided, use the project's config
-# 	if embedding_config is None:
-# 		embedding_config = get_project_embedding_config(project, document_dir, debug)
-# 	
-# 	# Create query embedding with the project's embedding provider
-# 	embedding_provider = get_embedding_provider(
-# 		project_dir=project, 
-# 		document_dir=document_dir, 
-# 		config=embedding_config,
-# 		debug=debug
-# 	)
-# 	
-# 	# Get base embedding type and model
-# 	base_embedding_type = embedding_provider.config.embedding_type
-# 	base_embedding_model = embedding_provider.config.model_name
-# 	base_key = (base_embedding_type, base_embedding_model)
-# 	
-# 	all_results = []
-# 	
-# 	try:
-# 		# First, try to search documents with matching embedding type/model
-# 		if base_key in document_groups:
-# 			start_time = time.time()
-# 			
-# 			# Create query embedding
-# 			print_system("Creating query embedding...")
-# 			query_embedding = embedding_provider.create_embedding(query)
-# 			search_time = time.time() - start_time
-# 			
-# 			if debug:
-# 				print_debug(f"Created query embedding in {search_time:.2f} seconds")
-# 				print_debug(f"Searching {len(document_groups[base_key])} documents with matching embedding model")
-# 			else:
-# 				print_system(f"Created embedding in {search_time:.2f}s. Calculating document similarity...")
-# 			
-# 			# Calculate similarities for the base model group with progress bar
-# 			base_docs = document_groups[base_key]
-# 			
-# 			# Create iterator with progress bar if tqdm is available
-# 			if has_tqdm and not debug and len(base_docs) > 10:
-# 				base_docs_iter = tqdm(base_docs, desc="Searching documents", unit="doc")
-# 			else:
-# 				base_docs_iter = base_docs
-# 			
-# 			base_similarities = []
-# 			for doc in base_docs_iter:
-# 				if doc.embedding:
-# 					# Calculate cosine similarity
-# 					sim = cosine_similarity(
-# 						[query_embedding], 
-# 						[doc.embedding]
-# 					)[0][0]
-# 					base_similarities.append((doc, sim))
-# 			
-# 			all_results.extend(base_similarities)
-# 			
-# 			# If we don't have enough results and there are other embedding types
-# 			if len(base_similarities) < top_k and len(document_groups) > 1:
-# 				print_system(f"Searching documents with different embedding models...")
-# 				
-# 				# For each different embedding type, we need a new provider
-# 				for key, docs in document_groups.items():
-# 					if key == base_key:
-# 						continue  # Skip the base key we already processed
-# 					
-# 					embedding_type, model_name = key
-# 					if debug:
-# 						print_debug(f"Searching {len(docs)} documents with embedding type: {embedding_type}, model: {model_name}")
-# 					
-# 					# Create a temporary provider for this embedding type
-# 					temp_config = EmbeddingConfig(embedding_type=embedding_type, model_name=model_name)
-# 					temp_provider = get_embedding_provider(config=temp_config, debug=debug)
-# 					
-# 					# Create query embedding with this provider
-# 					start_time = time.time()
-# 					temp_query_embedding = temp_provider.create_embedding(query)
-# 					search_time = time.time() - start_time
-# 					
-# 					if debug:
-# 						print_debug(f"Created query embedding with {model_name} in {search_time:.2f} seconds")
-# 					
-# 					# Calculate similarities with progress bar
-# 					if has_tqdm and not debug and len(docs) > 10:
-# 						docs_iter = tqdm(docs, desc=f"Searching {model_name}", unit="doc")
-# 					else:
-# 						docs_iter = docs
-# 					
-# 					other_similarities = []
-# 					for doc in docs_iter:
-# 						if doc.embedding:
-# 							sim = cosine_similarity(
-# 								[temp_query_embedding], 
-# 								[doc.embedding]
-# 							)[0][0]
-# 							other_similarities.append((doc, sim))
-# 					
-# 					all_results.extend(other_similarities)
-# 		
-# 		# Sort all results by similarity score
-# 		sorted_results = sorted(all_results, key=lambda x: x[1], reverse=True)
-# 		
-# 		# Extract only the top-k DISTINCT documents by file path
-# 		top_distinct_results = []
-# 		distinct_files = set()
-# 		
-# 		for doc, sim in sorted_results:
-# 			# Get a unique identifier for this document (file path is a good choice)
-# 			file_path = doc.metadata.get('file_path', 'unknown')
-# 			
-# 			# Only add if we haven't seen this file yet
-# 			if file_path not in distinct_files:
-# 				top_distinct_results.append((doc, sim))
-# 				distinct_files.add(file_path)
-# 				
-# 				# Break once we have top_k distinct documents
-# 				if len(top_distinct_results) >= top_k:
-# 					break
-# 		
-# 		# Just get the documents without the scores
-# 		top_results = [doc for doc, sim in top_distinct_results]
-# 		
-# 		# In debug mode, print details about the relevant documents
-# 		if debug:
-# 			print_debug(f"Found {len(top_results)} distinct relevant documents:")
-# 			for i, (doc, sim) in enumerate(top_distinct_results):
-# 				proj = doc.metadata.get('project', MASTER_PROJECT)
-# 				file_path = doc.metadata.get('file_path', 'unknown')
-# 				file_name = doc.metadata.get('file_name', 'unknown')
-# 				chunk_index = doc.metadata.get('chunk_index', 0)
-# 				total_chunks = doc.metadata.get('total_chunks', 0)
-# 				emb_model = doc.metadata.get('embedding_model', 'unknown')
-# 				
-# 				print_debug(f"Document {i+1}:")
-# 				print_debug(f"  Score: {sim:.4f}")
-# 				print_debug(f"  Project: {proj}")
-# 				print_debug(f"  File: {file_path}")
-# 				print_debug(f"  Chunk: {chunk_index+1}/{total_chunks}")
-# 				print_debug(f"  Embedding Model: {emb_model}")
-# 				print_debug(f"  Content Preview: {doc.content[:100]}...")
-# 				print()
-# 		else:
-# 			# For regular users, show a neat summary of discovered documents
-# 			if top_results:
-# 				print_system(f"\nFound {len(top_results)} relevant sources:")
-# 				for i, (doc, sim) in enumerate(top_distinct_results):
-# 					file_path = doc.metadata.get('file_path', 'unknown')
-# 					
-# 					# Get just the filename from the path
-# 					file_name = os.path.basename(file_path)
-# 					
-# 					# Get project if different from current
-# 					doc_project = doc.metadata.get('project', MASTER_PROJECT)
-# 					project_info = f" (project: {doc_project})" if doc_project != project and doc_project != MASTER_PROJECT else ""
-# 					
-# 					# Format the similarity score as percentage
-# 					score_percent = int(sim * 100)
-# 					
-# 					# Print a clean summary line
-# 					print_system(f"  {i+1}. {HIGHLIGHT_COLOR}{file_name}{RESET_COLOR}{SYSTEM_COLOR} - {score_percent}% match{project_info}")
-# 			else:
-# 				print_system("No relevant documents found in the index.")
-# 		
-# 		return top_results
-# 		
-# 	except Exception as e:
-# 		print_error(f"Error during search: {e}")
-# 		if debug:
-# 			print(traceback.format_exc())
-# 		return []
 
 
 
@@ -1517,371 +1408,7 @@ def is_command(text: str) -> bool:
 	]
 	return any(text.lower() == cmd or text.lower().startswith(cmd) for cmd in command_prefixes)		
 
-
-# def interactive_mode(documents: List[Document], api_key: str, project: str, 
-# 					document_dir: str, index_dir: str, 
-# 					embedding_config: Optional[EmbeddingConfig] = None,
-# 					debug: bool = False, prompts_dir: str = PROMPTS_DIR,
-# 					llm_type: str = LLM_CLAUDE, local_model: str = DEFAULT_LOCAL_MODEL,
-# 					hf_model: str = DEFAULT_HF_MODEL, 
-# 					history_dir: str = "history") -> None:
-# 	"""Run the application in interactive mode."""
-# 	print_system(f"RAG Query Application - Interactive Mode (Project: {HIGHLIGHT_COLOR}{project}{RESET_COLOR}{SYSTEM_COLOR})")
-# 	print_system("Type 'help' to see available commands")
-# 	
-# 	# Initialize variables
-# 	current_project = project
-# 	current_documents = documents
-# 	current_embedding_config = embedding_config or get_project_embedding_config(project, document_dir, debug)
-# 	current_llm_type = llm_type
-# 	current_local_model = local_model
-# 	current_hf_model = hf_model
-# 	
-# 	# Initialize history
-# 	history = CommandHistory(history_dir=history_dir)
-# 	
-# 	# Function to get the current model name based on LLM type
-# 	def get_current_model_name():
-# 		if current_llm_type == LLM_LOCAL:
-# 			return current_local_model
-# 		elif current_llm_type == LLM_HF:
-# 			return current_hf_model
-# 		else:
-# 			return "API"
-# 	
-# 	# Print the initial help info (optional, you can remove this if you prefer)
-# 	print_help_info(current_project, current_llm_type, get_current_model_name())
-# 	
-# 	while True:
-# 		try:
-# 			# Print the prompt with the current project and LLM highlighted
-# 			current_model = get_current_model_name()
-# 			prompt = f"\n{QUERY_COLOR}Enter your question [{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{QUERY_COLOR}] [{HIGHLIGHT_COLOR}{current_llm_type}:{current_model}{RESET_COLOR}{QUERY_COLOR}]: {RESET_COLOR}"
-# 			query = input(prompt).strip()
-# 			
-# 			if not query:
-# 				continue
-# 			
-# 			# Add to history - determine if it's a command or query
-# 			is_query = not is_command(query)
-# 			history.add(query, is_query=is_query)
-# 			
-# 			if query.lower() in ['exit', 'quit']:
-# 				print_system("Exiting...")
-# 				break
-# 				
-# 			elif query.lower() == 'help':
-# 				# Display help information
-# 				print_help_info(current_project, current_llm_type, get_current_model_name())
-# 				continue
-# 			
-# 			
-# 			
-# 			# Handle special commands
-# 			if query.lower() == 'history':
-# 				# Show command history
-# 				entries = history.get_entries()
-# 				if not entries:
-# 					print_system("History is empty")
-# 				else:
-# 					print_system("\nCommand History:")
-# 					for i, (cmd, is_query) in enumerate(entries[-20:], 1):  # Show last 20 entries
-# 						cmd_type = "Query" if is_query else "Command"
-# 						color = QUERY_COLOR if is_query else SYSTEM_COLOR
-# 						print(f"{color}{i}. [{cmd_type}] {cmd}{RESET_COLOR}")
-# 				continue
-# 				
-# 			elif query.lower() == 'history clear':
-# 				# Clear command history
-# 				confirm = input(f"{SYSTEM_COLOR}Are you sure you want to clear the command history? (y/n): {RESET_COLOR}").strip().lower()
-# 				if confirm == 'y':
-# 					history.clear()
-# 					print_system("Command history cleared")
-# 				continue
-# 				
-# 			elif query.lower() == 'history save':
-# 				# Save command history to file
-# 				filepath = history.save()
-# 				if filepath:
-# 					print_system(f"History saved to: {filepath}")
-# 				continue
-# 			
-# 			# ... [rest of your existing command handling code] ...
-# 			# Handle special commands
-# 			if query.lower() == 'projects':
-# 				projects = discover_projects(index_dir)
-# 				print_system("\nAvailable Projects:")
-# 				for p in projects:
-# 					marker = "*" if p == current_project else " "
-# 					print_system(f"{marker} {HIGHLIGHT_COLOR}{p}{RESET_COLOR}")
-# 				continue
-# 			
-# 			elif query.lower() == 'config':
-# 				print_system("\nCurrent Embedding Configuration:")
-# 				print_system(f"Project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
-# 				print_system(f"Embedding Type: {current_embedding_config.embedding_type}")
-# 				print_system(f"Embedding Model: {current_embedding_config.model_name}")
-# 				
-# 				# Show config file path
-# 				config_path = get_project_config_path(current_project, document_dir)
-# 				if os.path.exists(config_path):
-# 					print_system(f"Config File: {config_path}")
-# 				else:
-# 					print_system("Config File: Not found (using defaults)")
-# 				continue
-# 			
-# 			# Clear the index
-# 			# Then add this to the command handling section:
-# 			elif query.lower() == 'index clear':
-# 				# Ask for confirmation
-# 				confirm = input(f"{SYSTEM_COLOR}Are you sure you want to clear the index for project '{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{SYSTEM_COLOR}'? This cannot be undone. (y/n): {RESET_COLOR}").strip().lower()
-# 				
-# 				if confirm == 'y':
-# 					print_system(f"\nClearing index for project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
-# 					success = clear_index(current_project, index_dir, debug)
-# 					
-# 					if success:
-# 						# Reset the current documents to an empty list
-# 						current_documents = []
-# 						print_system(f"Project '{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{SYSTEM_COLOR}' index cleared successfully")
-# 						print_system(f"The index is now empty")
-# 					
-# 				continue
-# 
-# 
-# 			elif query.lower() == 'index':
-# 				print_system(f"\nIndexing project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
-# 				success = index_project(current_project, document_dir, index_dir, debug)
-# 				
-# 				if success:
-# 					# Reload the project index
-# 					index_path, backup_dir = get_index_path(index_dir, current_project)
-# 					current_documents = load_index(index_path, backup_dir, debug)
-# 					
-# 					# Reload the embedding config
-# 					current_embedding_config = get_project_embedding_config(current_project, document_dir, debug)
-# 					
-# 					print_system(f"Project '{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{SYSTEM_COLOR}' re-indexed successfully")
-# 					print_system(f"Loaded {len(current_documents)} documents")
-# 				continue
-# 				
-# 			elif query.lower() == 'models':
-# 				# List both llm and Hugging Face models
-# 				print_system("\nCurrent LLM Settings:")
-# 				print_system(f"  Type: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR}")
-# 				
-# 				if current_llm_type == LLM_LOCAL:
-# 					print_system(f"  Model: {HIGHLIGHT_COLOR}{current_local_model}{RESET_COLOR}")
-# 				elif current_llm_type == LLM_HF:
-# 					print_system(f"  Model: {HIGHLIGHT_COLOR}{current_hf_model}{RESET_COLOR}")
-# 				
-# 				# Try Simon Willison's llm library first
-# 				llm_found = False
-# 				try:
-# 					import llm
-# 					llm_found = True
-# 					
-# 					# Try different methods to get models
-# 					try:
-# 						models = llm.get_models()
-# 						model_names = [m.model_id for m in models] if hasattr(models[0], 'model_id') else [str(m) for m in models]
-# 					except:
-# 						try:
-# 							model_names = llm.list_models()
-# 						except:
-# 							# As a last resort, call the CLI command
-# 							import subprocess
-# 							result = subprocess.run(['llm', 'models'], capture_output=True, text=True)
-# 							output = result.stdout
-# 							model_names = []
-# 							for line in output.split('\n'):
-# 								if line.strip():
-# 									parts = line.strip().split()
-# 									if parts:
-# 										model_names.append(parts[0])					
-# 					if model_names:
-# 						print_system("\nAvailable Models from llm library (--llm local):")
-# 						for name in model_names:
-# 							marker = "*" if name == current_local_model and current_llm_type == LLM_LOCAL else " "
-# 							print_system(f"{marker} {HIGHLIGHT_COLOR}{name}{RESET_COLOR}")
-# 					else:
-# 						print_system("\nNo models found through llm library.")
-# 						print_system("You may need to install models with 'llm install <model>'")
-# 				except ImportError:
-# 					print_system("\nSimon Willison's llm library is not installed.")
-# 					print_system("You can install it with: pip install llm")
-# 				
-# 				# Show some common Hugging Face models
-# 				print_system("\nCommon Hugging Face models (--llm hf):")
-# 				hf_models = [
-# 					"TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-# 					"nomic-ai/gpt4all-j",
-# 					"EleutherAI/gpt-neo-1.3B",
-# 					"mistralai/Mistral-7B-v0.1"
-# 				]
-# 				
-# 				# Add shorthand names
-# 				print_system("\nShorthand names for Hugging Face models:")
-# 				shorthand_models = {
-# 					"tinyllama": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-# 					"gpt4all": "nomic-ai/gpt4all-j",
-# 					"gpt-neo": "EleutherAI/gpt-neo-1.3B",
-# 					"mistral": "mistralai/Mistral-7B-v0.1"
-# 				}
-# 				
-# 				for name, full_name in shorthand_models.items():
-# 					marker = "*" if (name == current_hf_model or full_name == current_hf_model) and current_llm_type == LLM_HF else " "
-# 					print_system(f"{marker} {HIGHLIGHT_COLOR}{name}{RESET_COLOR} → {full_name}")
-# 				
-# 				print_system("\nUsage examples:")
-# 				print_system("  llm claude")
-# 				print_system("  llm local")
-# 				print_system("  llm local orca-2-7b")
-# 				print_system("  llm hf")
-# 				print_system("  llm hf tinyllama")
-# 				print_system("  llm hf TinyLlama/TinyLlama-1.1B-Chat-v1.0")
-# 				
-# 				continue
-# 			
-# 			elif query.lower().startswith('llm '):
-# 				# Parse the llm command with more intuitive syntax
-# 				parts = query[4:].strip().split(maxsplit=1)
-# 				llm_choice = parts[0].lower() if parts else ""
-# 				model_arg = parts[1] if len(parts) > 1 else None
-# 				
-# 				if llm_choice == LLM_CLAUDE:
-# 					current_llm_type = LLM_CLAUDE
-# 					print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR}")
-# 				
-# 				elif llm_choice == LLM_LOCAL:
-# 					current_llm_type = LLM_LOCAL
-# 					if model_arg:
-# 						current_local_model = model_arg
-# 						print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with model: {HIGHLIGHT_COLOR}{current_local_model}{RESET_COLOR}")
-# 					else:
-# 						print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_local_model}{RESET_COLOR}")
-# 				
-# 				elif llm_choice == LLM_HF:
-# 					current_llm_type = LLM_HF
-# 					if model_arg:
-# 						current_hf_model = model_arg
-# 						print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with model: {HIGHLIGHT_COLOR}{current_hf_model}{RESET_COLOR}")
-# 					else:
-# 						print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_hf_model}{RESET_COLOR}")
-# 				
-# 				else:
-# 					print_error(f"Unknown LLM type: {llm_choice}")
-# 					print_system("Valid options are:")
-# 					print_system("  llm claude")
-# 					print_system("  llm local [model_name]")
-# 					print_system("  llm hf [model_name]")
-# 				
-# 				continue
-# 
-# 				
-# 				
-# 							
-# 			elif query.lower().startswith('project '):
-# 				new_project = query[8:].strip()
-# 				index_path, backup_dir = get_index_path(index_dir, new_project)
-# 				
-# 				if not os.path.exists(index_path):
-# 					print_system(f"Project '{HIGHLIGHT_COLOR}{new_project}{RESET_COLOR}{SYSTEM_COLOR}' not found or not indexed")
-# 					# Ask if user wants to create it
-# 					create = input(f"{SYSTEM_COLOR}Would you like to create and index project '{HIGHLIGHT_COLOR}{new_project}{RESET_COLOR}{SYSTEM_COLOR}'? (y/n): {RESET_COLOR}").strip().lower()
-# 					if create == 'y':
-# 						# Create the project directory if needed
-# 						if new_project != MASTER_PROJECT:
-# 							project_dir = os.path.join(document_dir, new_project)
-# 							os.makedirs(project_dir, exist_ok=True)
-# 							print_system(f"Created project directory: {project_dir}")
-# 						
-# 						# Index the new project
-# 						success = index_project(new_project, document_dir, index_dir, debug)
-# 						if success:
-# 							current_project = new_project
-# 							current_documents = load_index(index_path, backup_dir, debug)
-# 							current_embedding_config = get_project_embedding_config(new_project, document_dir, debug)
-# 							print_system(f"Switched to project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
-# 					continue
-# 				
-# 				# Load the new project
-# 				new_documents = load_index(index_path, backup_dir, debug)
-# 				if new_documents:
-# 					current_project = new_project
-# 					current_documents = new_documents
-# 					# Load the project's embedding configuration
-# 					current_embedding_config = get_project_embedding_config(new_project, document_dir, debug)
-# 					print_system(f"Switched to project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
-# 					print_system(f"Embedding Type: {current_embedding_config.embedding_type}")
-# 					print_system(f"Embedding Model: {current_embedding_config.model_name}")
-# 				else:
-# 					print_system(f"No documents found in project: {HIGHLIGHT_COLOR}{new_project}{RESET_COLOR}")
-# 				continue
-# 				
-# 			# Testing LLM implementation
-# 			
-# 			elif query.lower() == 'test':
-# 				print_system("Can I apply for extenuating circumstances?")
-# 				
-# 				prompt = "Can I apply for extenuating circumstances?"
-# 				import llm
-# 				
-# 				for model in llm.get_models():
-# 					print(model.model_id)
-# 
-# 				model = llm.get_model("mistral-7b-openorca")
-# 				response = model.prompt(prompt)
-# 				print(response)
-# 				
-# 				continue
-# 			
-# 			# Regular query - search for relevant documents
-# 			# Echo the query if it's not a command
-# 			if not is_command(query):
-# 				# Add a blank line after the query for better readability
-# 				print()
-# 				print_system("Searching for relevant documents...")
-# 				
-# 				relevant_docs = search_documents(
-# 					query, current_documents, current_project, 
-# 					document_dir, current_embedding_config, debug=debug
-# 				)
-# 				
-# 				# If we found relevant documents and not in debug mode, confirm before querying
-# 				if relevant_docs and not debug:
-# 					proceed = input(f"{SYSTEM_COLOR}Proceed with query using these sources? (Y/n): {RESET_COLOR}").strip().lower()
-# 					if proceed == 'n':
-# 						print_system("Query canceled")
-# 						continue
-# 				
-# 				# Get the model name based on current LLM type
-# 				model_name = None
-# 				if current_llm_type == LLM_LOCAL:
-# 					model_name = current_local_model
-# 				elif current_llm_type == LLM_HF:
-# 					model_name = current_hf_model
-# 				
-# 				# Ask the selected LLM
-# 				print_system(f"Generating answer with {current_llm_type} {model_name} ...")
-# 				answer = get_response(
-# 					query, relevant_docs, api_key, current_project,
-# 					current_llm_type, model_name, debug, prompts_dir
-# 				)
-# 				
-# 				# Print the answer with proper colors
-# 				print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
-# 				print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")		
-# 						
-# 
-# 		except KeyboardInterrupt:
-# 			print_system("\nInterrupted by user. Exiting...")
-# 			break
-# 		except Exception as e:
-# 			print_error(f"{e}")
-# 			if debug:
-# 				print(traceback.format_exc())
-				
+		
 
 
 def interactive_mode(documents: List[Document], api_key: str, project: str, 
@@ -1910,9 +1437,11 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	provider_cache = EmbeddingProviderCache(debug=debug)
 	
 	# Preload the embedding provider for the current project
-	if debug:
-		print_debug(f"Preloading embedding provider for project: {current_project}")
+	print_system("Loading embedding model...")
+	start_time = time.time()
 	provider_cache.get_provider(current_project, document_dir, current_embedding_config)
+	load_time = time.time() - start_time
+	print_system(f"Embedding model loaded in {load_time:.2f} seconds")
 	
 	# Function to get the current model name based on LLM type
 	def get_current_model_name():
@@ -2538,7 +2067,18 @@ def main():
 	
 	# Create embedding provider cache
 	provider_cache = EmbeddingProviderCache(debug=args.debug)
+	
+	# Ensure the model is loaded at startup
+	print_system("Loading embedding model...")
+	start_time = time.time()
+	provider = provider_cache.get_provider(args.project, args.document_dir, embedding_config)
+	if args.debug:
+		print_debug(f"Embedding model loaded in {time.time() - start_time:.2f} seconds")
+	else:
+		print_system(f"Embedding model loaded in {time.time() - start_time:.2f} seconds")
 
+
+	# THIS MIGHT NOT NOW BE NEEDED
 	# If no custom embedding config was provided, use the project's config
 	if embedding_config is None:
 		embedding_config = get_project_embedding_config(args.project, args.document_dir, args.debug)
