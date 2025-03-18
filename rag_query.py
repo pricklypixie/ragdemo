@@ -266,7 +266,54 @@ def load_index(index_path: str, backup_dir: str, debug: bool = False) -> List[Do
 		
 		return []
 
-
+def clear_index(project: str, index_dir: str, debug: bool = False) -> bool:
+		"""
+		Clear (erase) the index for a specific project.
+		
+		Args:
+			project: The project name to clear
+			index_dir: Base index directory
+			debug: Enable debug logging
+			
+		Returns:
+			True if successful, False otherwise
+		"""
+		index_path, backup_dir = get_index_path(index_dir, project)
+		
+		if not os.path.exists(index_path):
+			print_error(f"Index file not found: {index_path}")
+			return False
+		
+		try:
+			# Create a backup before deletion
+			timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+			backup_file = os.path.join(backup_dir, f"pre_clear_backup_{timestamp}.pkl")
+			
+			os.makedirs(backup_dir, exist_ok=True)
+			
+			if debug:
+				print_debug(f"Creating backup of current index at: {backup_file}")
+			
+			# Copy the current index to a backup
+			with open(index_path, 'rb') as src, open(backup_file, 'wb') as dst:
+				dst.write(src.read())
+			
+			# Create an empty index file (with no documents)
+			empty_documents = []
+			with open(index_path, 'wb') as f:
+				pickle.dump(empty_documents, f)
+			
+			print_system(f"Successfully cleared index for project: {HIGHLIGHT_COLOR}{project}{RESET_COLOR}")
+			print_system(f"Backup created at: {backup_file}")
+			return True
+			
+		except Exception as e:
+			print_error(f"Error clearing index: {e}")
+			if debug:
+				print(traceback.format_exc())
+			return False
+			
+			
 def get_project_embedding_config(project: str, document_dir: str, debug: bool = False) -> EmbeddingConfig:
 	"""Get the embedding configuration for a project, loading from project config if available."""
 	config_path = get_project_config_path(project, document_dir)
@@ -970,9 +1017,8 @@ def ask_local_hf(query: str, relevant_docs: List[Document], project: str, local_
 
 def is_command(text: str) -> bool:
 	"""Check if the input is a command rather than a question."""
-	command_prefixes = ["project ", "projects", "config", "index", "exit", "quit", "llm ", "models"]
-	return any(text.lower() == cmd or text.lower().startswith(cmd) for cmd in command_prefixes)
-		
+	command_prefixes = ["project ", "projects", "config", "index", "index clear", "exit", "quit", "llm ", "models"]
+	return any(text.lower() == cmd or text.lower().startswith(cmd) for cmd in command_prefixes)		
 		
 		
 def interactive_mode(documents: List[Document], api_key: str, project: str, 
@@ -987,7 +1033,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	print_system("Enter 'project <name>' to switch projects")
 	print_system("Enter 'projects' to list available projects")
 	print_system("Enter 'index' to create (or update) the current project's index")
-	# print_system("Enter 'index clear' to delete the current project's index")
+	print_system("Enter 'index clear' to delete the current project's index")
 	print_system("Enter 'config' to show current embedding configuration")
 	print_system(f"Enter 'llm claude' to use Claude API")
 	print_system(f"Enter 'llm local [model_name]' to use a local model with llm library")
@@ -1047,6 +1093,25 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 					print_system("Config File: Not found (using defaults)")
 				continue
 			
+			# Clear the index
+			# Then add this to the command handling section:
+			elif query.lower() == 'index clear':
+				# Ask for confirmation
+				confirm = input(f"{SYSTEM_COLOR}Are you sure you want to clear the index for project '{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{SYSTEM_COLOR}'? This cannot be undone. (y/n): {RESET_COLOR}").strip().lower()
+				
+				if confirm == 'y':
+					print_system(f"\nClearing index for project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
+					success = clear_index(current_project, index_dir, debug)
+					
+					if success:
+						# Reset the current documents to an empty list
+						current_documents = []
+						print_system(f"Project '{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{SYSTEM_COLOR}' index cleared successfully")
+						print_system(f"The index is now empty")
+					
+				continue
+
+
 			elif query.lower() == 'index':
 				print_system(f"\nIndexing project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
 				success = index_project(current_project, document_dir, index_dir, debug)
@@ -1343,6 +1408,8 @@ def main():
 						help="Project to query (default: master)")
 	parser.add_argument("--list-projects", action="store_true",
 						help="List all available projects")
+	parser.add_argument("--index-clear", action="store_true",
+						help="Clear (erase) the index for the specified project")
 	parser.add_argument("--index", action="store_true",
 						help="Index the specified project before querying")
 	parser.add_argument("--no-color", action="store_true",
@@ -1457,6 +1524,21 @@ def main():
 			embedding_type=args.embedding_type or DEFAULT_EMBEDDING_TYPE,
 			model_name=args.embedding_model or DEFAULT_EMBEDDING_MODEL
 		)
+		
+	# To clear the index
+	# Add this code after the argument parsing but before loading the index:
+	if args.index_clear:
+		print_system(f"Clearing index for project: {HIGHLIGHT_COLOR}{args.project}{RESET_COLOR}")
+		success = clear_index(args.project, args.index_dir, args.debug)
+		if not success:
+			print_error("Failed to clear index.")
+			sys.exit(1)
+		if args.query is None:  # If not in query mode, exit after clearing
+			print_system("Index cleared successfully. Exiting.")
+			sys.exit(0)
+		else:
+			# If we're going to query, we need an empty documents list
+			documents = []
 	
 	# Handle indexing if requested
 	if args.index:
