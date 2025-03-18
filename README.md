@@ -286,8 +286,10 @@ llm mlx-community/OLMo-2-0325-32B-Instruct-4bit
 ## Next Steps
 
    - Create way to access the relevant source documents
-   - Use alternative embedding / indexing models
-   - Have choice of LLMs for answer questions
+   
+## Issues
+
+   - Search can return the same document three times (if three chunks from the same document have the highest scores). Should be changed to return the three highest scoring documents.
 
 ## License
 
