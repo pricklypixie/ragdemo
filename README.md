@@ -248,6 +248,22 @@ This will:
 python rag_query.py --project sample --query "What is the main topic?" --debug
 ```
 
+## Experimenting with different local models
+
+Easiest to experiment with the LLM.
+
+For example, to use the excellent OLMo 2 model from the Allen institute (https://allenai.org/blog/olmo2-32B):
+
+```bash
+llm install llm-mlx
+llm mlx download-model mlx-community/OLMo-2-0325-32B-Instruct-4bit
+```
+
+And then within the application:
+
+llm mlx-community/OLMo-2-0325-32B-Instruct-4bit
+
+
 ## Troubleshooting
 
 - **Installation Issues**: Make sure you have the right Python version and all dependencies installed

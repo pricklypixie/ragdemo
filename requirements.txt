@@ -9,7 +9,6 @@ colorama>=-0.4.6
 llm>=0.23
 llm-gpt4all>=0.4
 transformers
-torch
 
 
 # for PDF extraction

@@ -115,7 +115,14 @@ def create_paragraph_chunks(text: str, max_chunk_size: int, debug: bool = False)
 			# Save the current chunk
 			chunks.append('\n\n'.join(current_chunk))
 			if debug:
+				print(f"[DEBUG] {current_chunk}")
 				print(f"[DEBUG] Created chunk {len(chunks)} with {current_size} chars and {len(current_chunk)} paragraphs")
+				
+				# Bad fix for files that do not chunk properly
+				# If more than 100 chunks, abort
+				
+				if len(chunks) > 100:
+					break
 			
 			# Start a new chunk
 			current_chunk = []
