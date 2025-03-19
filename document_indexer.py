@@ -671,11 +671,21 @@ def clean_text(text: str, debug: bool = False) -> str:
 		
 		# Step 2: Remove code blocks - handle various languages
 		code_block_pattern = r'```[a-zA-Z0-9_\-+]*\s*[\s\S]*?```'
-		text = re.sub(code_block_pattern, '', text)
+		text = re.sub(code_block_pattern, '\n', text, flags=re.DOTALL)
 		
 		# Additional pattern for R markdown code blocks
 		r_block_pattern = r'\n\\\`\\\`\\\`\{r[^}]*\}[\s\S]*?\\\`\\\`\\\`\n'
-		text = re.sub(r_block_pattern, '', text)
+		text = re.sub(r_block_pattern, '\n', text, flags=re.DOTALL)
+		
+		# Remove other markdown examples from specific projects
+		
+		include_pattern = r'\n{%.*?%}\n'
+		text = re.sub(include_pattern, '\n', text, flags=re.DOTALL)
+		
+		include_pattern = r'\n{:.*?}\n'
+		text = re.sub(include_pattern, '\n', text, flags=re.DOTALL)
+
+
 		
 		# Step 3: Remove HTML tags
 		html_pattern = r'<[^>]+>'
@@ -795,6 +805,7 @@ def index_file_with_provider(file_path: str, project: str, document_dir: str,
 				  f"(type: {embedding_provider.config.embedding_type})")
 				  
 		# Clean text before further processing
+				
 		content = clean_text(content, debug)
 				
 		# Use paragraph-based chunking with overlap

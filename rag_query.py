@@ -79,7 +79,8 @@ from embeddings import EmbeddingConfig, get_embedding_provider, load_project_con
 
 # Constants
 # MODEL = "claude-3-opus-20240229"
-MODEL = "mistral-7b-instruct-v0"
+MODEL = "claude-3-7-sonnet-20250219"
+# MODEL = "mistral-7b-instruct-v0"
 MAX_TOKENS = 8096
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
@@ -101,7 +102,7 @@ LLM_HF = "hf"
 
 # Default models
 DEFAULT_LLM_TYPE = LLM_LOCAL
-DEFAULT_LOCAL_MODEL = "mistral-7b-openorca"
+DEFAULT_LOCAL_MODEL = "mistral-7b-instruct-v0"
 DEFAULT_HF_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 
