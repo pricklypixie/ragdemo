@@ -12,8 +12,10 @@ A robust command-line Retrieval Augmented Generation (RAG) application that uses
 
 ## Requirements
 
-- Python 3.7+
-- Anthropic API key
+- Python 3.11.5
+- Anthropic API key (optional)
+- OpenAI API key (optional)
+- Huggingface API key (optional)
 - Documents in TXT or MD format
 
 ## Installation
