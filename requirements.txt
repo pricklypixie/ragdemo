@@ -9,9 +9,9 @@ colorama>=0.4.6
 llm>=0.23
 llm-gpt4all>=0.4
 transformers
-readline==8.2
 tqdm
 einops
+
 
 
 # for PDF extraction (in development)
