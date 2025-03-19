@@ -81,10 +81,8 @@ def create_paragraph_chunks(text: str, max_chunk_size: int, debug: bool = False)
 	Each chunk (except the first) begins with the last paragraph of the previous chunk.
 	"""
 	
-	# Remove any inline R script
-	pattern = r'\n\\\`\\\`\\\`\{r[^}]*\}[\s\S]*?\\\`\\\`\\\`\n'
-	text = re.sub(pattern, '', text)
-
+	# clean text before further processing
+	text = clean_text(text, debug)
 	
 	if debug:
 		print(f"[DEBUG] Creating paragraph chunks for text of length {len(text)}")
@@ -267,44 +265,6 @@ def save_index(documents: List[Document], index_path: str, backup_dir: str, debu
 		print(f"Error saving index: {e}")
 
 
-# def calculate_optimal_chunk_size(embedding_provider, chars_per_dimension: int, 
-# 								 default_size: int = DEFAULT_MAX_CHUNK_SIZE, 
-# 								 debug: bool = False) -> int:
-# 	"""
-# 	Calculate an optimal chunk size based on the embedding dimension.
-# 	Using chars_per_dimension as a multiplier for the embedding dimension.
-# 	
-# 	Args:
-# 		embedding_provider: The embedding provider to get dimensions from
-# 		chars_per_dimension: Characters per embedding dimension
-# 		default_size: Default size to use if calculation fails
-# 		debug: Whether to print debug information
-# 		
-# 	Returns:
-# 		Optimal chunk size in characters
-# 	"""
-# 	try:
-# 		dimension = embedding_provider.get_embedding_dimension()
-# 		if dimension <= 0:
-# 			if debug:
-# 				print(f"[DEBUG] Invalid embedding dimension: {dimension}, using default size")
-# 			return default_size
-# 		
-# 		# Calculate chunk size as a multiple of the embedding dimension
-# 		chunk_size = dimension * chars_per_dimension
-# 		
-# 		# Ensure it's within reasonable bounds
-# 		chunk_size = max(DEFAULT_MIN_CHUNK_SIZE * 2, min(chunk_size, 8000))
-# 		
-# 		if debug:
-# 			print(f"[DEBUG] Calculated optimal chunk size: {chunk_size} chars "
-# 				  f"(dimension: {dimension} × {chars_per_dimension} chars/dim)")
-# 		
-# 		return chunk_size
-# 	except Exception as e:
-# 		if debug:
-# 			print(f"[DEBUG] Error calculating optimal chunk size: {e}")
-# 		return default_size
 
 
 def calculate_optimal_chunk_size(embedding_provider, chars_per_dimension: int, 
@@ -682,6 +642,79 @@ def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
 		print(f"Project '{proj}': {len(docs)} document chunks")
 
 
+def clean_text(text: str, debug: bool = False) -> str:
+		"""
+		Clean and normalize text before chunking and embedding.
+		
+		This function:
+		1. Normalizes line endings
+		2. Removes code blocks (R, Python, etc.)
+		3. Removes HTML tags
+		4. Standardizes whitespace
+		5. Handles special characters and symbols
+		
+		Args:
+			text: The input text to clean
+			debug: Whether to print debug information
+			
+		Returns:
+			Cleaned text ready for chunking
+		"""
+		if debug:
+			original_length = len(text)
+			print(f"[DEBUG] Cleaning text of length {original_length}")
+		
+		# Step 1: Normalize line endings
+		text = text.replace('\r\n', '\n').replace('\r', '\n')
+		
+
+		
+		# Step 2: Remove code blocks - handle various languages
+		code_block_pattern = r'```[a-zA-Z0-9_\-+]*\s*[\s\S]*?```'
+		text = re.sub(code_block_pattern, '', text)
+		
+		# Additional pattern for R markdown code blocks
+		r_block_pattern = r'\n\\\`\\\`\\\`\{r[^}]*\}[\s\S]*?\\\`\\\`\\\`\n'
+		text = re.sub(r_block_pattern, '', text)
+		
+		# Step 3: Remove HTML tags
+		html_pattern = r'<[^>]+>'
+		text = re.sub(html_pattern, '', text)
+		
+		# Step 4: Standardize whitespace
+		# Replace multiple spaces with a single space
+		text = re.sub(r' +', ' ', text)
+		# Replace multiple newlines with at most two (to preserve paragraph breaks)
+		text = re.sub(r'\n{3,}', '\n\n', text)
+		
+		# Step 5: Special handling for common markdown elements
+		# Remove horizontal rules
+		text = re.sub(r'---+', '', text)
+		# Simplify bullet points
+		text = re.sub(r'^\s*[*\-+]\s+', '• ', text, flags=re.MULTILINE)
+		
+		# Remove URLs (optional - could replace with [URL] if preferred)
+		url_pattern = r'https?://\S+'
+		text = re.sub(url_pattern, '[URL]', text)
+		
+		text = text.replace('\n', '\n\n')		
+		while '\n\n\n' in text:
+			text = text.replace('\n\n\n', '\n\n')
+
+		
+		# Strip extra whitespace at beginning and end
+		text = text.strip()
+		
+		if debug:
+			cleaned_length = len(text)
+			reduction = original_length - cleaned_length
+			percent = (reduction / original_length) * 100 if original_length > 0 else 0
+			print(f"[DEBUG] Removed {reduction} characters ({percent:.1f}%) during cleaning")
+		
+		return text
+
+
+
 def index_file_with_provider(file_path: str, project: str, document_dir: str, 
 									project_indexes: Dict[str, List[Document]], 
 									max_chunk_size: int, 
@@ -761,15 +794,9 @@ def index_file_with_provider(file_path: str, project: str, document_dir: str,
 			print(f"[DEBUG] Using embedding model: {embedding_provider.config.model_name} "
 				  f"(type: {embedding_provider.config.embedding_type})")
 				  
-		# Remove any inline R script
-		pattern = r'\n\\\`\\\`\\\`\{r[^}]*\}[\s\S]*?\\\`\\\`\\\`\n'
-		content = re.sub(pattern, '', content)
-		
-		# some debug code
-		if debug:
-			if rel_path == 'textbook/02-10-evolution-of-marketing/01-10-40-notes-marketing-management-process.md':
-				print(content)
-		
+		# Clean text before further processing
+		content = clean_text(content, debug)
+				
 		# Use paragraph-based chunking with overlap
 		chunks = create_paragraph_chunks(content, max_chunk_size, debug)
 		
