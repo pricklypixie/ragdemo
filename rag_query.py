@@ -629,43 +629,6 @@ def index_project(project: str, document_dir: str, index_dir: str,
 
 
 
-# def get_multiline_input(prompt: str) -> str:
-# 	"""
-# 	Get user input with proper handling of long lines in the terminal.
-# 	This ensures text scrolls up properly instead of overwriting the same line.
-# 	
-# 	Args:
-# 		prompt: The prompt to display before input
-# 		
-# 	Returns:
-# 		The user's input as a string
-# 	"""
-# 	# Print the prompt first
-# 	print(prompt, end="", flush=True)
-# 	
-# 	# Use a list to collect input lines
-# 	lines = []
-# 	line = ""
-# 	
-# 	while True:
-# 		char = sys.stdin.read(1)
-# 		
-# 		# Handle Enter key (line break)
-# 		if char == '\n':
-# 			return line
-# 		# Handle backspace
-# 		elif char == '\b' or ord(char) == 127:  # Different systems use different backspace codes
-# 			if line:
-# 				# Remove the last character
-# 				line = line[:-1]
-# 				# Clear the current line and reprint
-# 				print("\r" + " " * (len(prompt) + len(line) + 1) + "\r" + prompt + line, end="", flush=True)
-# 		# Normal character input
-# 		else:
-# 			line += char
-# 			print(char, end="", flush=True)
-
-
 
 
 def search_documents(query: str, documents: List[Document], project: str, 
@@ -985,6 +948,213 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 
 # to use Simon Willison's LLM library
 
+# def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local_model: str = "gpt4all", 
+# 				 debug: bool = False, prompts_dir: str = PROMPTS_DIR) -> str:
+# 	"""
+# 	Process a user query using Simon Willison's LLM library.
+# 	
+# 	Args:
+# 		query: The user's query
+# 		relevant_docs: List of relevant documents
+# 		project: Project name
+# 		local_model: Name of the local model to use
+# 		debug: Enable debug output
+# 		prompts_dir: Directory to save prompts for debugging
+# 		
+# 	Returns:
+# 		The LLM's response as a string
+# 	"""
+# 	try:
+# 		# Prepare prompt with the same format as for Claude
+# 		if not relevant_docs:
+# 			# If no relevant documents found
+# 			prompt_text = f"""
+# 			User has asked: {query}
+# 			
+# 			I'm searching in the project: {project}
+# 			
+# 			Please note that I couldn't find any relevant documents in my knowledge base to help answer this question.
+# 			Please answer based on your general knowledge, and mention that no specific documents were found.
+# 			"""
+# 		else:
+# 			# Build context from relevant documents
+# 			context_pieces = []
+# 			for i, doc in enumerate(relevant_docs):
+# 				# Get document metadata
+# 				source = f"{doc.metadata.get('file_path', 'Unknown document')}"
+# 				doc_project = doc.metadata.get('project', MASTER_PROJECT)
+# 				
+# 				# Include chunk info in the source
+# 				chunk_info = f"Chunk {doc.metadata.get('chunk_index', 'unknown')+1}/{doc.metadata.get('total_chunks', 'unknown')}"
+# 				
+# 				# Add paragraph count and project if available
+# 				extra_info = []
+# 				if 'paragraphs' in doc.metadata:
+# 					extra_info.append(f"{doc.metadata.get('paragraphs')} paragraphs")
+# 				if doc_project != MASTER_PROJECT:
+# 					extra_info.append(f"project: {doc_project}")
+# 				
+# 				source_with_info = f"{source} ({chunk_info}, {', '.join(extra_info)})"
+# 				context_pieces.append(f"Document {i+1} (Source: {source_with_info}):\n{doc.content}")
+# 			
+# 			context = "\n\n".join(context_pieces)
+# 			
+# 			# Prepare prompt with context
+# 			prompt_text = f"""
+# 			User has asked: {query}
+# 			
+# 			I'm searching in the project: {project}
+# 			
+# 			I've retrieved the following documents that might help answer this question:
+# 			
+# 			{context}
+# 			
+# 			Please answer the user's question based on the information in these documents.
+# 			If the documents don't contain the necessary information, please say so and answer based on your general knowledge.
+# 			In your answer, cite which documents you used.
+# 			"""
+# 		
+# 		if debug:
+# 			print_debug(f"Using Simon Willison's llm with model: {local_model}")
+# 			
+# 			# Save the prompt to a JSON file
+# 			log_path = save_prompt_to_json(prompt_text, query, project, relevant_docs, prompts_dir)
+# 			if log_path:
+# 				print_debug(f"Saved prompt to {log_path}")
+# 		
+# 		# Set up timeout
+# 		signal.signal(signal.SIGALRM, timeout_handler)
+# 		signal.alarm(API_TIMEOUT)
+# 		
+# 		try:
+# 			if debug:
+# 				print_debug("Importing llm library...")
+# 				
+# 			import llm
+# 			
+# 			start_time = time.time()
+# 			
+# 			# Try different methods to get models
+# 			model_names = []
+# 			
+# 			# Method 1: Try using llm.get_models()
+# 			try:
+# 				models = llm.get_models()
+# 				if models:
+# 					model_names = [getattr(m, 'model_id', str(m)) for m in models]
+# 					if debug:
+# 						print_debug(f"Found {len(model_names)} models via llm.get_models()")
+# 			except Exception as e:
+# 				if debug:
+# 					print_debug(f"Error with llm.get_models(): {e}")
+# 			
+# 			# Method 2: Try using llm.list_models() if available
+# 			if not model_names:
+# 				try:
+# 					if hasattr(llm, 'list_models'):
+# 						model_list = llm.list_models()
+# 						model_names = [str(m) for m in model_list]
+# 						if debug:
+# 							print_debug(f"Found {len(model_names)} models via llm.list_models()")
+# 				except Exception as e:
+# 					if debug:
+# 						print_debug(f"Error with llm.list_models(): {e}")
+# 			
+# 			# Method 3: Check if llm-gpt4all plugin is installed and list its models
+# 			if not model_names:
+# 				try:
+# 					# Try to import the specific gpt4all plugin
+# 					import llm_gpt4all
+# 					if hasattr(llm_gpt4all, 'get_models'):
+# 						plugin_models = llm_gpt4all.get_models()
+# 						model_names = [m.model_id for m in plugin_models]
+# 						if debug:
+# 							print_debug(f"Found {len(model_names)} models via llm_gpt4all plugin")
+# 				except ImportError:
+# 					if debug:
+# 						print_debug("llm_gpt4all plugin not found")
+# 			
+# 			if debug:
+# 				print_debug(f"Available models: {', '.join(model_names) if model_names else 'None found'}")
+# 			
+# 			# Use the specified model if available, otherwise use the first available model
+# 			if model_names:
+# 				if local_model in model_names:
+# 					try:
+# 						model = llm.get_model(local_model)
+# 						if debug:
+# 							print_debug(f"Using model: {local_model}")
+# 					except Exception as model_err:
+# 						if debug:
+# 							print_debug(f"Error loading specified model: {model_err}")
+# 						# Try using the first available model
+# 						try:
+# 							model = llm.get_model(model_names[0])
+# 							if debug:
+# 								print_debug(f"Using first available model: {model_names[0]}")
+# 						except:
+# 							raise ValueError(f"Could not load any models")
+# 				else:
+# 					try:
+# 						# Use the first available model
+# 						model = llm.get_model(model_names[0])
+# 						if debug:
+# 							print_debug(f"Model '{local_model}' not found, using '{model_names[0]}' instead")
+# 					except Exception as e:
+# 						if debug:
+# 							print_debug(f"Error loading first model: {e}")
+# 						raise ValueError(f"Model '{local_model}' not found and couldn't load alternatives")
+# 				
+# 				# Generate response
+# 				try:
+# 					if debug:
+# 						print_debug(f"Generating response with {model}")
+# 					
+# 					# Different versions of llm have slightly different APIs
+# 					try:
+# 						response = model.prompt(prompt_text)
+# 						result = str(response)
+# 					except AttributeError:
+# 						# Try alternate API style
+# 						response = model.complete(prompt_text)
+# 						result = response.text()
+# 					
+# 					elapsed_time = time.time() - start_time
+# 					if debug:
+# 						print_debug(f"Generated response in {elapsed_time:.2f} seconds")
+# 						# print_debug(prompt_text)
+# 					
+# 					# Cancel the alarm
+# 					signal.alarm(0)
+# 					
+# 					return result
+# 				except Exception as e:
+# 					if debug:
+# 						print_debug(f"Error generating response: {e}")
+# 					raise
+# 			else:
+# 				if debug:
+# 					print_debug("No models available through llm library")
+# 				raise ValueError("No local models available. Please install one using 'llm install'")
+# 				
+# 		except (ImportError, ModuleNotFoundError) as e:
+# 			if debug:
+# 				print_debug(f"llm library not found: {e}")
+# 			raise ImportError("Simon Willison's llm library is not installed. Please install it with: pip install llm")
+# 			
+# 	except APITimeoutError:
+# 		return "I'm sorry, but the local LLM timed out. Please try a simpler question or a lighter model."
+# 	except ImportError as ie:
+# 		return str(ie)
+# 	except Exception as e:
+# 		if debug:
+# 			print(traceback.format_exc())
+# 		return f"I'm sorry, but an error occurred while processing your request with the local LLM: {str(e)}"
+# 	finally:
+# 		# Make sure to cancel the alarm
+# 		signal.alarm(0)
+
+
 def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local_model: str = "gpt4all", 
 				 debug: bool = False, prompts_dir: str = PROMPTS_DIR) -> str:
 	"""
@@ -1002,54 +1172,62 @@ def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local
 		The LLM's response as a string
 	"""
 	try:
-		# Prepare prompt with the same format as for Claude
+		# Prepare prompt with the new structure
 		if not relevant_docs:
 			# If no relevant documents found
 			prompt_text = f"""
-			User has asked: {query}
-			
-			I'm searching in the project: {project}
-			
-			Please note that I couldn't find any relevant documents in my knowledge base to help answer this question.
-			Please answer based on your general knowledge, and mention that no specific documents were found.
-			"""
+TASK:
+
+Please read very carefully the documents with the <DOCUMENTS> tag and use them to answer or address the following:
+
+{query}
+
+If you cannot address the question or task using the documents below, do not rely on your general knowledge.
+
+DOCUMENTS:
+
+<documents>
+No relevant documents were found in the database for project: {project}.
+</documents>
+
+Since no relevant documents were found, please let the user know you don't have specific information on this topic.
+"""
 		else:
 			# Build context from relevant documents
 			context_pieces = []
 			for i, doc in enumerate(relevant_docs):
 				# Get document metadata
-				source = f"{doc.metadata.get('file_path', 'Unknown document')}"
-				doc_project = doc.metadata.get('project', MASTER_PROJECT)
+				file_path = doc.metadata.get('file_path', 'Unknown document')
 				
-				# Include chunk info in the source
-				chunk_info = f"Chunk {doc.metadata.get('chunk_index', 'unknown')+1}/{doc.metadata.get('total_chunks', 'unknown')}"
-				
-				# Add paragraph count and project if available
-				extra_info = []
-				if 'paragraphs' in doc.metadata:
-					extra_info.append(f"{doc.metadata.get('paragraphs')} paragraphs")
-				if doc_project != MASTER_PROJECT:
-					extra_info.append(f"project: {doc_project}")
-				
-				source_with_info = f"{source} ({chunk_info}, {', '.join(extra_info)})"
-				context_pieces.append(f"Document {i+1} (Source: {source_with_info}):\n{doc.content}")
+				# Format the document with its ID and source
+				doc_text = f"""<document id={i+1}, source={file_path}>
+{doc.content}
+</document>"""
+				context_pieces.append(doc_text)
 			
-			context = "\n\n".join(context_pieces)
+			# Join all document contexts
+			documents_context = "\n\n".join(context_pieces)
 			
-			# Prepare prompt with context
+			# Prepare prompt with the new structure
 			prompt_text = f"""
-			User has asked: {query}
-			
-			I'm searching in the project: {project}
-			
-			I've retrieved the following documents that might help answer this question:
-			
-			{context}
-			
-			Please answer the user's question based on the information in these documents.
-			If the documents don't contain the necessary information, please say so and answer based on your general knowledge.
-			In your answer, cite which documents you used.
-			"""
+TASK:
+
+Please read very carefully the documents with the <DOCUMENTS> tag and use them to answer or address the following:
+
+{query}
+
+If you cannot address the question or task using the documents below, do not rely on your general knowledge.
+
+DOCUMENTS:
+
+<documents>
+{documents_context}
+</documents>
+
+REFERENCING:
+
+Provide a list of the documents you used, and how you made use of them at the end of your answer.
+"""
 		
 		if debug:
 			print_debug(f"Using Simon Willison's llm with model: {local_model}")
@@ -1159,6 +1337,8 @@ def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local
 					elapsed_time = time.time() - start_time
 					if debug:
 						print_debug(f"Generated response in {elapsed_time:.2f} seconds")
+						print_debug(prompt_text)
+
 					
 					# Cancel the alarm
 					signal.alarm(0)
