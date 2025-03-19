@@ -86,7 +86,7 @@ DEFAULT_DOCUMENT_DIR = "documents"
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 DEFAULT_EMBEDDING_TYPE = "sentence_transformers"
 TOP_K_DOCUMENTS = 5
-API_TIMEOUT = 60  # Timeout for API calls in seconds
+API_TIMEOUT = 120  # Timeout for API calls in seconds
 MASTER_PROJECT = "master"  # Name for the master index
 PROMPTS_DIR = "prompts"  # Directory to save prompt logs
 
