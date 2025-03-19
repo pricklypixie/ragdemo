@@ -14,7 +14,7 @@ import importlib
 import traceback
 from typing import List, Dict, Any, Optional, Union, Tuple
 
-# Force CPU usage instead of Metal on MacOS
+# CPU vs Metal on MacOS
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "0"
 os.environ["MPS_FALLBACK_POLICY"] = "0"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Disable CUDA
@@ -37,7 +37,10 @@ MODEL_DIMENSIONS = {
 	# Sentence Transformers models
 	"all-MiniLM-L6-v2": 384,
 	"all-mpnet-base-v2": 768,
+	"multi-qa-distilbert-dot-v1": 768,
+	"multi-qa-mpnet-base-dot-v1": 786,
 	"paraphrase-multilingual-mpnet-base-v2": 768,
+	"nomic-ai/nomic-embed-text-v1": 8192,
 	# OpenAI models
 	"text-embedding-3-small": 1536,
 	"text-embedding-3-large": 3072,
@@ -232,8 +235,8 @@ class SentenceTransformersProvider(BaseEmbeddingProvider):
 			self.debug_log(f"PyTorch version: {torch.__version__}")
 			self.debug_log(f"Loading Sentence Transformer model: {self.config.model_name} on MPS")
 			
-			# Force CPU usage
-			self.model = SentenceTransformer(self.config.model_name, device="mps")
+			# Force CPU or Metal usage
+			self.model = SentenceTransformer(self.config.model_name, device="mps", trust_remote_code=True)
 			
 			self.debug_log("Model loaded successfully")
 		except ImportError as e:

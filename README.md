@@ -204,11 +204,17 @@ Each project can have its own embedding configuration by adding an `embedding_co
    - OpenAI's embedding API
    - Recommended models: "text-embedding-3-small", "text-embedding-3-large"
    - Requires OpenAI API key (set via OPENAI_API_KEY environment variable)
+   
+For experimentation, there we see no benefit from running remote embedding models, unless there is a particular need for much larger embedding sizes.
 
 ### Example Configurations
 
 #### For multilingual documents:
 ```json
+// A HuggingFace User Access Tokens may be required to download
+// some sentence_transformers models
+// https://huggingface.co/sentence-transformers
+// 
 {
   "embedding_type": "sentence_transformers",
   "model_name": "paraphrase-multilingual-mpnet-base-v2"

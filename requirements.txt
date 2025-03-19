@@ -11,6 +11,7 @@ llm-gpt4all>=0.4
 transformers
 readline
 tqdm
+einops
 
 
 # for PDF extraction

@@ -25,6 +25,8 @@ from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
 
+import re
+
 
 # Import our custom embedding library
 from embeddings import EmbeddingConfig, get_embedding_provider, load_project_config
@@ -35,7 +37,7 @@ warnings.filterwarnings("ignore", message="resource_tracker")
 # Constants
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
-MAX_CHUNK_SIZE = 1500  # Characters - this should be a default and should change depending on embedding model
+MAX_CHUNK_SIZE = 3500  # Characters - this should be a default and should change depending on embedding model
 MIN_CHUNK_SIZE = 50  # Minimum characters for a chunk to be indexed
 MAX_CHUNKS = 100 # temporary fix for files that don't chunk properly
 MASTER_PROJECT = "master"  # Name for the master index
@@ -76,6 +78,12 @@ def create_paragraph_chunks(text: str, max_chunk_size: int, debug: bool = False)
 	Create chunks by grouping paragraphs with overlap between chunks.
 	Each chunk (except the first) begins with the last paragraph of the previous chunk.
 	"""
+	
+	# Remove any inline R script
+	pattern = r'\n\\\`\\\`\\\`\{r[^}]*\}[\s\S]*?\\\`\\\`\\\`\n'
+	text = re.sub(pattern, '', text)
+
+	
 	if debug:
 		print(f"[DEBUG] Creating paragraph chunks for text of length {len(text)}")
 	
@@ -600,6 +608,15 @@ def index_file_with_provider(file_path: str, project: str, document_dir: str,
 		# else:
 			print(f"[DEBUG] Using embedding model: {embedding_provider.config.model_name} "
 				  f"(type: {embedding_provider.config.embedding_type})")
+				  
+		# Remove any inline R script
+		pattern = r'\n\\\`\\\`\\\`\{r[^}]*\}[\s\S]*?\\\`\\\`\\\`\n'
+		content = re.sub(pattern, '', content)
+		
+		# some debug code
+		if debug:
+			if rel_path == 'textbook/02-10-evolution-of-marketing/01-10-40-notes-marketing-management-process.md':
+				print(content)
 		
 		# Use paragraph-based chunking with overlap
 		chunks = create_paragraph_chunks(content, max_chunk_size, debug)
