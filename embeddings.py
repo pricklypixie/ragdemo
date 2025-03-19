@@ -40,7 +40,7 @@ MODEL_DIMENSIONS = {
 	"multi-qa-distilbert-dot-v1": 768,
 	"multi-qa-mpnet-base-dot-v1": 786,
 	"paraphrase-multilingual-mpnet-base-v2": 768,
-	"nomic-ai/nomic-embed-text-v1": 8192,
+	"nomic-ai/nomic-embed-text-v1": 768,
 	# OpenAI models
 	"text-embedding-3-small": 1536,
 	"text-embedding-3-large": 3072,
@@ -49,20 +49,120 @@ MODEL_DIMENSIONS = {
 }
 
 
+# class EmbeddingConfig:
+# 	"""Configuration for embedding generation."""
+# 	
+# 	def __init__(self, 
+# 				 embedding_type: str = "sentence_transformers",
+# 				 model_name: Optional[str] = None,
+# 				 dimensions: Optional[int] = 384,
+# 				 api_key: Optional[str] = None,
+# 				 additional_params: Optional[Dict[str, Any]] = None):
+# 		"""
+# 		Initialize embedding configuration.
+# 		
+# 		Args:
+# 			embedding_type: Type of embedding to use (e.g., "sentence_transformers", "openai")
+# 			model_name: Name of the model to use (if None, uses default for the type)
+# 			dimensions: Number of embedding dimensions used by the model (if None, will lookup if possible or use default) 
+# 			api_key: API key for services that require it
+# 			additional_params: Additional parameters for the embedding model
+# 		"""
+# 		self.embedding_type = embedding_type
+# 		self.dimensions = dimensions
+# 		
+# 		# Use default model if none specified
+# 		if model_name is None and embedding_type in DEFAULT_MODELS:
+# 			self.model_name = DEFAULT_MODELS[embedding_type]
+# 		else:
+# 			self.model_name = model_name
+# 		
+# 		self.api_key = api_key
+# 		self.additional_params = additional_params or {}
+# 		
+# 		# Validate configuration
+# 		self._validate()
+# 	
+# 	def _validate(self):
+# 		"""Validate the configuration."""
+# 		if not self.embedding_type:
+# 			raise ValueError("Embedding type must be specified")
+# 		
+# 		if not self.model_name:
+# 			raise ValueError(f"Model name must be specified for embedding type {self.embedding_type}")
+# 		
+# 		# Check if API key is required but not provided
+# 		if self.embedding_type == "openai" and not self.api_key:
+# 			# Try to get from environment
+# 			self.api_key = os.environ.get("OPENAI_API_KEY")
+# 			if not self.api_key:
+# 				raise ValueError("API key is required for OpenAI embeddings. Set OPENAI_API_KEY environment variable.")
+# 	
+# 	@classmethod
+# 	def from_dict(cls, config_dict: Dict[str, Any]) -> 'EmbeddingConfig':
+# 		"""Create configuration from a dictionary."""
+# 		return cls(
+# 			embedding_type=config_dict.get("embedding_type", "sentence_transformers"),
+# 			model_name=config_dict.get("model_name"),
+# 			api_key=config_dict.get("api_key"),
+# 			additional_params=config_dict.get("additional_params")
+# 		)
+# 	
+# 	@classmethod
+# 	def from_json_file(cls, config_path: str) -> 'EmbeddingConfig':
+# 		"""Load configuration from a JSON file."""
+# 		try:
+# 			with open(config_path, 'r') as f:
+# 				config_dict = json.load(f)
+# 			return cls.from_dict(config_dict)
+# 		except Exception as e:
+# 			print(f"Error loading embedding configuration from {config_path}: {e}")
+# 			raise
+# 	
+# 	def to_dict(self) -> Dict[str, Any]:
+# 		"""Convert configuration to a dictionary."""
+# 		return {
+# 			"embedding_type": self.embedding_type,
+# 			"model_name": self.model_name,
+# 			"api_key": self.api_key,
+# 			"additional_params": self.additional_params
+# 		}
+# 	
+# 	def save_to_file(self, config_path: str) -> None:
+# 		"""Save configuration to a JSON file."""
+# 		os.makedirs(os.path.dirname(config_path), exist_ok=True)
+# 		with open(config_path, 'w') as f:
+# 			# Don't save API key to file for security
+# 			config_dict = self.to_dict()
+# 			config_dict["api_key"] = None
+# 			json.dump(config_dict, f, indent=2)
+# 	
+# 	def get_dimension(self) -> int:
+# 		"""Get the dimension of the embedding model."""
+# 		if self.model_name in MODEL_DIMENSIONS:
+# 			return MODEL_DIMENSIONS[self.model_name]
+# 		else:
+# 			# Default size if unknown
+# 			return 768
+
+
 class EmbeddingConfig:
 	"""Configuration for embedding generation."""
 	
 	def __init__(self, 
-				 embedding_type: str = "sentence_transformers",
-				 model_name: Optional[str] = None,
-				 api_key: Optional[str] = None,
-				 additional_params: Optional[Dict[str, Any]] = None):
+				embedding_type: str = "sentence_transformers",
+				model_name: Optional[str] = None,
+				dimensions: Optional[int] = None,  # Changed to None to force lookup
+				api_key: Optional[str] = None,
+				additional_params: Optional[Dict[str, Any]] = None):
 		"""
 		Initialize embedding configuration.
 		
 		Args:
 			embedding_type: Type of embedding to use (e.g., "sentence_transformers", "openai")
 			model_name: Name of the model to use (if None, uses default for the type)
+			dimensions: Number of embedding dimensions used by the model 
+						(if None, will lookup from MODEL_DIMENSIONS or use default)
 			api_key: API key for services that require it
 			additional_params: Additional parameters for the embedding model
 		"""
@@ -74,11 +174,26 @@ class EmbeddingConfig:
 		else:
 			self.model_name = model_name
 		
+		# Handle dimensions with proper fallback logic
+		if dimensions is not None:
+			self.dimensions = dimensions
+		else:
+			# Try to get dimensions from MODEL_DIMENSIONS
+			self.dimensions = self._lookup_model_dimensions()
+		
 		self.api_key = api_key
 		self.additional_params = additional_params or {}
 		
 		# Validate configuration
 		self._validate()
+	
+	def _lookup_model_dimensions(self) -> int:
+		"""Look up model dimensions from MODEL_DIMENSIONS or use default."""
+		if self.model_name in MODEL_DIMENSIONS:
+			return MODEL_DIMENSIONS[self.model_name]
+		else:
+			# Default size if unknown
+			return 384
 	
 	def _validate(self):
 		"""Validate the configuration."""
@@ -94,6 +209,10 @@ class EmbeddingConfig:
 			self.api_key = os.environ.get("OPENAI_API_KEY")
 			if not self.api_key:
 				raise ValueError("API key is required for OpenAI embeddings. Set OPENAI_API_KEY environment variable.")
+		
+		# Ensure dimensions are set
+		if self.dimensions is None:
+			self.dimensions = self._lookup_model_dimensions()
 	
 	@classmethod
 	def from_dict(cls, config_dict: Dict[str, Any]) -> 'EmbeddingConfig':
@@ -101,6 +220,7 @@ class EmbeddingConfig:
 		return cls(
 			embedding_type=config_dict.get("embedding_type", "sentence_transformers"),
 			model_name=config_dict.get("model_name"),
+			dimensions=config_dict.get("dimensions"),  # Pass through dimensions from config
 			api_key=config_dict.get("api_key"),
 			additional_params=config_dict.get("additional_params")
 		)
@@ -121,6 +241,7 @@ class EmbeddingConfig:
 		return {
 			"embedding_type": self.embedding_type,
 			"model_name": self.model_name,
+			"dimensions": self.dimensions,  # Include dimensions in output
 			"api_key": self.api_key,
 			"additional_params": self.additional_params
 		}
@@ -136,12 +257,9 @@ class EmbeddingConfig:
 	
 	def get_dimension(self) -> int:
 		"""Get the dimension of the embedding model."""
-		if self.model_name in MODEL_DIMENSIONS:
-			return MODEL_DIMENSIONS[self.model_name]
-		else:
-			# Default size if unknown
-			return 768
-
+		# Return the dimensions property, which should already be 
+		# set either from explicit value or lookup during initialization
+		return self.dimensions
 
 class EmbeddingFactory:
 	"""Factory for creating embedding providers."""
@@ -166,6 +284,60 @@ class EmbeddingFactory:
 			raise ValueError(f"Unsupported embedding type: {config.embedding_type}")
 
 
+# class BaseEmbeddingProvider:
+# 	"""Base class for embedding providers."""
+# 	
+# 	def __init__(self, config: EmbeddingConfig, debug: bool = False):
+# 		"""
+# 		Initialize the embedding provider.
+# 		
+# 		Args:
+# 			config: Embedding configuration
+# 			debug: Whether to enable debug logging
+# 		"""
+# 		self.config = config
+# 		self.debug = debug
+# 		self.model = None
+# 	
+# 	def debug_log(self, message: str) -> None:
+# 		"""Print debug message if debug mode is enabled."""
+# 		if self.debug:
+# 			print(f"[DEBUG] {message}")
+# 	
+# 	def load_model(self) -> None:
+# 		"""Load the embedding model."""
+# 		raise NotImplementedError("Subclasses must implement load_model")
+# 	
+# 	def create_embedding(self, text: str) -> List[float]:
+# 		"""
+# 		Create an embedding for the given text.
+# 		
+# 		Args:
+# 			text: Text to embed
+# 			
+# 		Returns:
+# 			List of floating point values representing the embedding
+# 		"""
+# 		raise NotImplementedError("Subclasses must implement create_embedding")
+# 	
+# 	def get_embedding_dimension(self) -> int:
+# 		"""Get the dimension of the embedding model."""
+# 		return self.config.get_dimension()
+# 	
+# 	def batch_create_embeddings(self, texts: List[str]) -> List[List[float]]:
+# 		"""
+# 		Create embeddings for multiple texts.
+# 		
+# 		Args:
+# 			texts: List of texts to embed
+# 			
+# 		Returns:
+# 			List of embeddings
+# 		"""
+# 		# Default implementation - override for more efficient batching
+# 		return [self.create_embedding(text) for text in texts]
+
+
 class BaseEmbeddingProvider:
 	"""Base class for embedding providers."""
 	
@@ -180,6 +352,12 @@ class BaseEmbeddingProvider:
 		self.config = config
 		self.debug = debug
 		self.model = None
+		
+		# Ensure dimensions are properly set in config
+		if self.config.dimensions is None:
+			self.config.dimensions = self.config._lookup_model_dimensions()
+			if self.debug:
+				self.debug_log(f"Set dimensions to {self.config.dimensions} based on model lookup")
 	
 	def debug_log(self, message: str) -> None:
 		"""Print debug message if debug mode is enabled."""
@@ -204,21 +382,20 @@ class BaseEmbeddingProvider:
 	
 	def get_embedding_dimension(self) -> int:
 		"""Get the dimension of the embedding model."""
-		return self.config.get_dimension()
+		return self.config.dimensions
 	
-	def batch_create_embeddings(self, texts: List[str]) -> List[List[float]]:
+	def validate_embedding_dimension(self, embedding: List[float]) -> None:
 		"""
-		Create embeddings for multiple texts.
-		
-		Args:
-			texts: List of texts to embed
-			
-		Returns:
-			List of embeddings
+		Validate that the embedding has the expected dimension.
+		Updates the config dimensions if necessary.
 		"""
-		# Default implementation - override for more efficient batching
-		return [self.create_embedding(text) for text in texts]
-
+		if embedding and len(embedding) != self.config.dimensions:
+			actual_dim = len(embedding)
+			if self.debug:
+				self.debug_log(f"Expected dimension {self.config.dimensions} but got {actual_dim}")
+				self.debug_log(f"Updating config to use actual model dimension")
+			# Update the config to use the actual dimension
+			self.config.dimensions = actual_dim
 
 class SentenceTransformersProvider(BaseEmbeddingProvider):
 	"""Provider for sentence-transformers embeddings."""
@@ -249,6 +426,32 @@ class SentenceTransformersProvider(BaseEmbeddingProvider):
 				print(traceback.format_exc())
 			raise
 	
+	# def create_embedding(self, text: str) -> List[float]:
+	# 	"""Create an embedding using sentence-transformers."""
+	# 	if self.model is None:
+	# 		self.load_model()
+	# 	
+	# 	self.debug_log(f"Generating embedding for text of length {len(text)}")
+	# 	
+	# 	try:
+	# 		import torch
+	# 		with torch.no_grad():
+	# 			# Process a single item, no batching
+	# 			embedding = self.model.encode(
+	# 				text,
+	# 				convert_to_numpy=True,
+	# 				show_progress_bar=False,
+	# 				batch_size=1
+	# 			).tolist()
+	# 		
+	# 		self.debug_log(f"Generated embedding with dimension {len(embedding)}")
+	# 		return embedding
+	# 	except Exception as e:
+	# 		print(f"Error generating embedding: {e}")
+	# 		if self.debug:
+	# 			print(traceback.format_exc())
+	# 		return []
+	
 	def create_embedding(self, text: str) -> List[float]:
 		"""Create an embedding using sentence-transformers."""
 		if self.model is None:
@@ -266,6 +469,14 @@ class SentenceTransformersProvider(BaseEmbeddingProvider):
 					show_progress_bar=False,
 					batch_size=1
 				).tolist()
+			
+			# Validate and potentially update the dimension
+			if len(embedding) != self.config.dimensions:
+				actual_dim = len(embedding)
+				self.debug_log(f"Actual embedding dimension ({actual_dim}) differs from config ({self.config.dimensions})")
+				self.config.dimensions = actual_dim
+				# Update MODEL_DIMENSIONS for future reference
+				MODEL_DIMENSIONS[self.config.model_name] = actual_dim
 			
 			self.debug_log(f"Generated embedding with dimension {len(embedding)}")
 			return embedding
@@ -346,6 +557,43 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
 				print(traceback.format_exc())
 			raise
 	
+	# def create_embedding(self, text: str) -> List[float]:
+	# 	"""Create an embedding using OpenAI's embedding API."""
+	# 	if self.model is None:
+	# 		self.load_model()
+	# 	
+	# 	self.debug_log(f"Generating OpenAI embedding for text of length {len(text)}")
+	# 	
+	# 	try:
+	# 		start_time = time.time()
+	# 		
+	# 		# Check if using legacy or new API
+	# 		if hasattr(self, 'legacy_api') and self.legacy_api:
+	# 			# Using older OpenAI API
+	# 			response = self.model.Embedding.create(
+	# 				model=self.config.model_name,
+	# 				input=text
+	# 			)
+	# 			embedding = response["data"][0]["embedding"]
+	# 		else:
+	# 			# Using newer OpenAI client
+	# 			response = self.model.embeddings.create(
+	# 				model=self.config.model_name,
+	# 				input=text
+	# 			)
+	# 			embedding = response.data[0].embedding
+	# 		
+	# 		elapsed_time = time.time() - start_time
+	# 		
+	# 		self.debug_log(f"Generated embedding with dimension {len(embedding)} in {elapsed_time:.2f}s")
+	# 		return embedding
+	# 	except Exception as e:
+	# 		print(f"Error generating OpenAI embedding: {e}")
+	# 		if self.debug:
+	# 			print(traceback.format_exc())
+	# 		return []
+	
+	
 	def create_embedding(self, text: str) -> List[float]:
 		"""Create an embedding using OpenAI's embedding API."""
 		if self.model is None:
@@ -354,30 +602,28 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
 		self.debug_log(f"Generating OpenAI embedding for text of length {len(text)}")
 		
 		try:
-			start_time = time.time()
+			import torch
+			with torch.no_grad():
+				# Process a single item, no batching
+				embedding = self.model.encode(
+					text,
+					convert_to_numpy=True,
+					show_progress_bar=False,
+					batch_size=1
+				).tolist()
 			
-			# Check if using legacy or new API
-			if hasattr(self, 'legacy_api') and self.legacy_api:
-				# Using older OpenAI API
-				response = self.model.Embedding.create(
-					model=self.config.model_name,
-					input=text
-				)
-				embedding = response["data"][0]["embedding"]
-			else:
-				# Using newer OpenAI client
-				response = self.model.embeddings.create(
-					model=self.config.model_name,
-					input=text
-				)
-				embedding = response.data[0].embedding
+			# Validate and potentially update the dimension
+			if len(embedding) != self.config.dimensions:
+				actual_dim = len(embedding)
+				self.debug_log(f"Actual embedding dimension ({actual_dim}) differs from config ({self.config.dimensions})")
+				self.config.dimensions = actual_dim
+				# Update MODEL_DIMENSIONS for future reference
+				MODEL_DIMENSIONS[self.config.model_name] = actual_dim
 			
-			elapsed_time = time.time() - start_time
-			
-			self.debug_log(f"Generated embedding with dimension {len(embedding)} in {elapsed_time:.2f}s")
+			self.debug_log(f"Generated embedding with dimension {len(embedding)}")
 			return embedding
 		except Exception as e:
-			print(f"Error generating OpenAI embedding: {e}")
+			print(f"Error generating embedding: {e}")
 			if self.debug:
 				print(traceback.format_exc())
 			return []

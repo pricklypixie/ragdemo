@@ -18,23 +18,28 @@ A robust command-line Retrieval Augmented Generation (RAG) application that uses
 
 ## Installation
 
-1. Clone the repository:
 
-```bash
-git clone https://github.com/pricklypixie/ragdemo.git
-cd ragdemo
-```
-
-3. Create virtual environment
+1. Create virtual environment
 
 ```bash
 conda create -n ragdemo
 conda activate ragdemo
 ```
 
+2. Clone the repository:
+
+```bash
+git clone https://github.com/pricklypixie/ragdemo.git
+# for development branch
+# git clone -b development https://github.com/pricklypixie/ragdemo.git
+cd ragdemo
+```
+
+
 3. Install dependencies:
 
 ```bash
+conda install python==3.11.5
 pip install -r requirements.txt
 ```
 

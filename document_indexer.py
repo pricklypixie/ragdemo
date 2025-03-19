@@ -7,6 +7,7 @@ This tool:
 2. Creates embeddings using the configurable embedding library
 3. Supports project-based indexing (subdirectories as separate projects)
 4. Saves separate indexes for each project and a master index
+5. Uses embedding-aware chunking for optimal results
 """
 
 import os
@@ -37,9 +38,10 @@ warnings.filterwarnings("ignore", message="resource_tracker")
 # Constants
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
-MAX_CHUNK_SIZE = 3500  # Characters - this should be a default and should change depending on embedding model
-MIN_CHUNK_SIZE = 50  # Minimum characters for a chunk to be indexed
-MAX_CHUNKS = 100 # temporary fix for files that don't chunk properly
+DEFAULT_MAX_CHUNK_SIZE = 1500  # Characters - this is now a default value
+DEFAULT_MIN_CHUNK_SIZE = 50    # Minimum characters for a chunk to be indexed
+DEFAULT_CHARS_PER_DIMENSION = 4  # Default characters per embedding dimension for auto-sizing
+MAX_CHUNKS = 100  # temporary fix for files that don't chunk properly
 MASTER_PROJECT = "master"  # Name for the master index
 
 
@@ -265,6 +267,86 @@ def save_index(documents: List[Document], index_path: str, backup_dir: str, debu
 		print(f"Error saving index: {e}")
 
 
+# def calculate_optimal_chunk_size(embedding_provider, chars_per_dimension: int, 
+# 								 default_size: int = DEFAULT_MAX_CHUNK_SIZE, 
+# 								 debug: bool = False) -> int:
+# 	"""
+# 	Calculate an optimal chunk size based on the embedding dimension.
+# 	Using chars_per_dimension as a multiplier for the embedding dimension.
+# 	
+# 	Args:
+# 		embedding_provider: The embedding provider to get dimensions from
+# 		chars_per_dimension: Characters per embedding dimension
+# 		default_size: Default size to use if calculation fails
+# 		debug: Whether to print debug information
+# 		
+# 	Returns:
+# 		Optimal chunk size in characters
+# 	"""
+# 	try:
+# 		dimension = embedding_provider.get_embedding_dimension()
+# 		if dimension <= 0:
+# 			if debug:
+# 				print(f"[DEBUG] Invalid embedding dimension: {dimension}, using default size")
+# 			return default_size
+# 		
+# 		# Calculate chunk size as a multiple of the embedding dimension
+# 		chunk_size = dimension * chars_per_dimension
+# 		
+# 		# Ensure it's within reasonable bounds
+# 		chunk_size = max(DEFAULT_MIN_CHUNK_SIZE * 2, min(chunk_size, 8000))
+# 		
+# 		if debug:
+# 			print(f"[DEBUG] Calculated optimal chunk size: {chunk_size} chars "
+# 				  f"(dimension: {dimension} × {chars_per_dimension} chars/dim)")
+# 		
+# 		return chunk_size
+# 	except Exception as e:
+# 		if debug:
+# 			print(f"[DEBUG] Error calculating optimal chunk size: {e}")
+# 		return default_size
+
+
+def calculate_optimal_chunk_size(embedding_provider, chars_per_dimension: int, 
+							 default_size: int = DEFAULT_MAX_CHUNK_SIZE, 
+							 debug: bool = False) -> int:
+	"""
+	Calculate an optimal chunk size based on the embedding dimension.
+	Using chars_per_dimension as a multiplier for the embedding dimension.
+	
+	Args:
+		embedding_provider: The embedding provider to get dimensions from
+		chars_per_dimension: Characters per embedding dimension
+		default_size: Default size to use if calculation fails
+		debug: Whether to print debug information
+		
+	Returns:
+		Optimal chunk size in characters
+	"""
+	try:
+		dimension = embedding_provider.get_embedding_dimension()
+		if dimension <= 0:
+			if debug:
+				print(f"[DEBUG] Invalid embedding dimension: {dimension}, using default size")
+			return default_size
+		
+		# Calculate chunk size as a multiple of the embedding dimension
+		chunk_size = dimension * chars_per_dimension
+		
+		# Ensure it's within reasonable bounds
+		chunk_size = max(DEFAULT_MIN_CHUNK_SIZE * 2, min(chunk_size, 8000))
+		
+		if debug:
+			print(f"[DEBUG] Calculated optimal chunk size: {chunk_size} chars "
+				f"(dimension: {dimension} × {chars_per_dimension} chars/dim)")
+		
+		return chunk_size
+	except Exception as e:
+		if debug:
+			print(f"[DEBUG] Error calculating optimal chunk size: {e}")
+		return default_size
+
+
 def get_accurate_chunk_count(files: List[str], max_chunk_size: int, debug: bool = False) -> int:
 	"""
 	Pre-process all files to get an accurate count of chunks that will be created.
@@ -284,7 +366,7 @@ def get_accurate_chunk_count(files: List[str], max_chunk_size: int, debug: bool 
 				chunks = create_paragraph_chunks(content, max_chunk_size, False)
 				
 				# Filter out chunks that are too small
-				chunks = [chunk for chunk in chunks if len(chunk) >= MIN_CHUNK_SIZE]
+				chunks = [chunk for chunk in chunks if len(chunk) >= DEFAULT_MIN_CHUNK_SIZE]
 				
 				# Apply cap of MAX_CHUNKS per file
 				actual_chunks = min(len(chunks), MAX_CHUNKS)
@@ -396,11 +478,23 @@ def get_project_embedding_config(project: str, document_dir: str, debug: bool = 
 
 
 def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
-						embedding_config: Optional[EmbeddingConfig] = None,
-						project: Optional[str] = None, debug: bool = False) -> None:
+					embedding_config: Optional[EmbeddingConfig] = None,
+					project: Optional[str] = None, debug: bool = False,
+					auto_adjust_chunks: bool = False,
+					chars_per_dimension: int = DEFAULT_CHARS_PER_DIMENSION) -> None:
 	"""
 	Index all supported documents in the specified directory.
 	Can be limited to a specific project (subdirectory).
+	
+	Args:
+		document_dir: Directory containing documents to index
+		index_dir: Directory to store the index
+		max_chunk_size: Maximum size of document chunks
+		embedding_config: Embedding configuration
+		project: Specific project to index (None for all)
+		debug: Whether to enable debug output
+		auto_adjust_chunks: Whether to adjust chunk size based on embedding dim
+		chars_per_dimension: Characters per embedding dimension for auto-sizing
 	"""
 	# Load all project indexes first
 	projects = [project] if project else discover_projects(document_dir)
@@ -413,6 +507,9 @@ def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
 	
 	# Dictionary to hold embedding providers for each project (to reuse them)
 	embedding_providers = {}
+	
+	# Dictionary to store optimal chunk sizes for each project
+	project_chunk_sizes = {}
 	
 	# Load existing indexes for each project
 	for proj in projects:
@@ -438,6 +535,17 @@ def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
 			if debug:
 				print(f"[DEBUG] Embedding provider initialized for {proj}: "
 					  f"{embedding_providers[proj].config.embedding_type}/{embedding_providers[proj].config.model_name}")
+			
+			# Calculate optimal chunk size if auto-adjust is enabled
+			if auto_adjust_chunks:
+				project_chunk_sizes[proj] = calculate_optimal_chunk_size(
+					embedding_providers[proj],
+					chars_per_dimension,
+					max_chunk_size,
+					debug
+				)
+			else:
+				project_chunk_sizes[proj] = max_chunk_size
 	
 	# Find all files to process
 	if project and project != MASTER_PROJECT:
@@ -459,8 +567,49 @@ def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
 	# Sort files by size (smallest first) to get some quick wins
 	files = sorted(files, key=os.path.getsize)
 	
-	# Get accurate chunk count instead of estimation
-	total_chunks = get_accurate_chunk_count(files, max_chunk_size, debug)
+	# Inform about chunk sizes if auto-adjusting
+	if auto_adjust_chunks:
+		print("\nUsing embedding-aware chunk sizes:")
+		for proj, size in project_chunk_sizes.items():
+			model_name = embedding_providers[proj].config.model_name
+			print(f"  Project '{proj}' using model '{model_name}': {size} chars")
+	
+	# Get accurate chunk count using project-specific chunk sizes
+	if auto_adjust_chunks:
+		# We need to determine the chunk size for each file based on its project
+		total_chunks = 0
+		print("Calculating exact number of chunks (pre-processing documents)...")
+		skipped_files = 0
+		
+		with tqdm(total=len(files), desc="Pre-processing", unit="file") as pbar:
+			for file_path in files:
+				try:
+					# Get file's project
+					file_project = get_project_path(file_path, document_dir)
+					# Use the project's chunk size
+					proj_chunk_size = project_chunk_sizes.get(file_project, max_chunk_size)
+					
+					with open(file_path, 'r', encoding='utf-8') as f:
+						content = f.read()
+					
+					chunks = create_paragraph_chunks(content, proj_chunk_size, False)
+					chunks = [chunk for chunk in chunks if len(chunk) >= DEFAULT_MIN_CHUNK_SIZE]
+					actual_chunks = min(len(chunks), MAX_CHUNKS)
+					total_chunks += actual_chunks
+					
+				except Exception as e:
+					if debug:
+						print(f"[DEBUG] Error pre-processing {file_path}: {e}")
+					skipped_files += 1
+				
+				pbar.update(1)
+		
+		if skipped_files > 0:
+			print(f"Warning: {skipped_files} files could not be pre-processed")
+	else:
+		# If not auto-adjusting, use the same chunk size for all files
+		total_chunks = get_accurate_chunk_count(files, max_chunk_size, debug)
+	
 	print(f"Total chunks to index: {total_chunks}")
 	
 	# Track files where indexing was aborted due to MAX_CHUNKS limit
@@ -483,13 +632,16 @@ def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
 			# Get file's project
 			file_project = get_project_path(file_path, document_dir)
 			
-			# Process the file using the project's embedding provider
+			# Get the project-specific chunk size
+			proj_chunk_size = project_chunk_sizes.get(file_project, max_chunk_size)
+			
+			# Process the file using the project's embedding provider and chunk size
 			chunks_reached_limit = index_file_with_provider(
 				file_path, 
 				file_project, 
 				document_dir, 
 				project_indexes, 
-				max_chunk_size, 
+				proj_chunk_size,  # Use project-specific chunk size
 				embedding_providers[file_project],  # Pass the provider directly
 				embedding_config,
 				debug,
@@ -627,7 +779,7 @@ def index_file_with_provider(file_path: str, project: str, document_dir: str,
 		
 		# Filter out chunks that are too small
 		original_chunk_count = len(chunks)
-		chunks = [chunk for chunk in chunks if len(chunk) >= MIN_CHUNK_SIZE]
+		chunks = [chunk for chunk in chunks if len(chunk) >= DEFAULT_MIN_CHUNK_SIZE]
 		
 		if debug:
 			print(f"  Split into {len(chunks)} chunks (removed {original_chunk_count - len(chunks)} chunks below MIN_CHUNK_SIZE)")
@@ -691,25 +843,30 @@ def main():
 	parser = argparse.ArgumentParser(description="Document Indexer for RAG Applications with Project Support")
 	
 	parser.add_argument("--index-dir", type=str, default=DEFAULT_INDEX_DIR, 
-						help="Directory to store the document index")
+					  help="Directory to store the document index")
 	parser.add_argument("--document-dir", type=str, default=DEFAULT_DOCUMENT_DIR, 
-						help="Directory containing documents to index")
+					  help="Directory containing documents to index")
 	parser.add_argument("--embedding-type", type=str, default="sentence_transformers",
-						help="Type of embedding to use (sentence_transformers, openai)")
+					  help="Type of embedding to use (sentence_transformers, openai)")
 	parser.add_argument("--embedding-model", type=str, 
-						help="Embedding model to use")
-	parser.add_argument("--max-chunk-size", type=int, default=MAX_CHUNK_SIZE,
-						help="Maximum size of document chunks in characters")
-	parser.add_argument("--min-chunk-size", type=int, default=MIN_CHUNK_SIZE,
-						help="Minimum size of document chunks in characters to be indexed")
+					  help="Embedding model to use")
+	parser.add_argument("--max-chunk-size", type=int, default=DEFAULT_MAX_CHUNK_SIZE,
+					  help="Maximum size of document chunks in characters")
+	parser.add_argument("--min-chunk-size", type=int, default=DEFAULT_MIN_CHUNK_SIZE,
+					  help="Minimum size of document chunks in characters to be indexed")
 	parser.add_argument("--debug", action="store_true",
-						help="Enable debug logging")
+					  help="Enable debug logging")
 	parser.add_argument("--file", type=str,
-						help="Index a single file instead of a directory")
+					  help="Index a single file instead of a directory")
 	parser.add_argument("--project", type=str,
-						help="Index a specific project (subdirectory) only")
+					  help="Index a specific project (subdirectory) only")
 	parser.add_argument("--list-projects", action="store_true", 
-						help="List all available projects")
+					  help="List all available projects")
+	# Add new arguments for embedding-aware chunking
+	parser.add_argument("--auto-adjust-chunks", action="store_true",
+					  help="Automatically adjust chunk size based on embedding model dimension")
+	parser.add_argument("--chars-per-dimension", type=int, default=DEFAULT_CHARS_PER_DIMENSION,
+					  help="Characters per embedding dimension when auto-adjusting chunks")
 	
 	args = parser.parse_args()
 	
@@ -748,6 +905,9 @@ def main():
 	print(f"Max chunk size: {args.max_chunk_size} characters")
 	print(f"Min chunk size: {args.min_chunk_size} characters")
 	print(f"Index directory: {args.index_dir}")
+	if args.auto_adjust_chunks:
+		print(f"Auto-adjusting chunk sizes based on embedding dimensions")
+		print(f"Characters per dimension: {args.chars_per_dimension}")
 	
 	# Track files where indexing was aborted due to MAX_CHUNKS limit
 	aborted_files = set()
@@ -769,13 +929,33 @@ def main():
 			index_path, backup_dir = get_index_path(args.index_dir, proj)
 			project_indexes[proj] = load_index(index_path, backup_dir, args.debug)
 		
+		# Create the embedding provider
+		embedding_provider = get_embedding_provider(
+			project_dir=project, 
+			document_dir=args.document_dir, 
+			config=embedding_config,
+			debug=args.debug
+		)
+		
+		# Calculate optimal chunk size if auto-adjust is enabled
+		if args.auto_adjust_chunks:
+			max_chunk_size = calculate_optimal_chunk_size(
+				embedding_provider,
+				args.chars_per_dimension,
+				args.max_chunk_size,
+				args.debug
+			)
+			print(f"Using embedding-aware chunk size: {max_chunk_size} characters")
+		else:
+			max_chunk_size = args.max_chunk_size
+		
 		# Get accurate chunk count for this file
 		rel_path = os.path.relpath(args.file, args.document_dir)
 		print(f"Preparing to index: {rel_path}")
 		
 		with open(args.file, 'r', encoding='utf-8') as f:
 			content = f.read()
-		chunks = create_paragraph_chunks(content, args.max_chunk_size, args.debug)
+		chunks = create_paragraph_chunks(content, max_chunk_size, args.debug)
 		chunks = [chunk for chunk in chunks if len(chunk) >= args.min_chunk_size]
 		
 		# Create file info line and progress bar on separate lines
@@ -791,8 +971,8 @@ def main():
 				project, 
 				args.document_dir, 
 				project_indexes, 
-				args.max_chunk_size, 
-				get_embedding_provider(project, args.document_dir, embedding_config, args.debug),
+				max_chunk_size, 
+				embedding_provider,
 				embedding_config, 
 				args.debug,
 				pbar
@@ -808,7 +988,7 @@ def main():
 		for proj, docs in project_indexes.items():
 			if docs:  # Only save if there are documents
 				index_path, backup_dir = get_index_path(args.index_dir, proj)
-				save_index(docs, index_path, backup_dir, args.debug)		
+				save_index(docs, index_path, backup_dir, args.debug)      
 	else:
 		# Index a directory
 		if not os.path.exists(args.document_dir):
@@ -821,12 +1001,18 @@ def main():
 				print(f"Error: Project directory not found: {project_dir}")
 				return
 			print(f"Indexing project: {args.project}")
-			index_directory(args.document_dir, args.index_dir, args.max_chunk_size, 
-						   embedding_config, args.project, args.debug)
+			index_directory(
+				args.document_dir, args.index_dir, args.max_chunk_size, 
+				embedding_config, args.project, args.debug,
+				args.auto_adjust_chunks, args.chars_per_dimension
+			)
 		else:
 			print(f"Indexing all documents")
-			index_directory(args.document_dir, args.index_dir, args.max_chunk_size,
-						   embedding_config, None, args.debug)
+			index_directory(
+				args.document_dir, args.index_dir, args.max_chunk_size,
+				embedding_config, None, args.debug,
+				args.auto_adjust_chunks, args.chars_per_dimension
+			)
 	
 	# Report files where indexing was aborted
 	if aborted_files:

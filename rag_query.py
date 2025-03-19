@@ -78,7 +78,8 @@ except ImportError:
 from embeddings import EmbeddingConfig, get_embedding_provider, load_project_config
 
 # Constants
-MODEL = "claude-3-opus-20240229"
+# MODEL = "claude-3-opus-20240229"
+MODEL = "mistral-7b-openorca"
 MAX_TOKENS = 8096
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
@@ -545,6 +546,8 @@ def get_project_embedding_config(project: str, document_dir: str, debug: bool = 
 				print_debug(f"Loaded project embedding config from: {config_path}")
 				print_debug(f"Embedding type: {config.embedding_type}")
 				print_debug(f"Embedding model: {config.model_name}")
+				print_debug(f"Embedding dimensions: {config.dimensions}")
+
 			return config
 		except Exception as e:
 			print_error(f"Error loading project config, using defaults: {e}")
@@ -1653,6 +1656,8 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 					print_system(f"Switched to project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
 					print_system(f"Embedding Type: {current_embedding_config.embedding_type}")
 					print_system(f"Embedding Model: {current_embedding_config.model_name}")
+					print_system(f"Embedding Dimensions: {current_embedding_config.dimensions}")
+
 				else:
 					print_system(f"No documents found in project: {HIGHLIGHT_COLOR}{new_project}{RESET_COLOR}")
 				continue
@@ -1881,8 +1886,10 @@ def main():
 	# Check if document directory exists
 	if not os.path.exists(args.document_dir):
 		print_error(f"Document directory not found: {args.document_dir}")
-		print_system("Please create the document directory and add your files.")
-		sys.exit(1)
+		print_system("Document directory created.")
+		os.makedirs(args.document_dir, exist_ok=True)
+		print_system("Please add your projects and files in the 'documents' directory.")
+		# sys.exit(1)
 	
 	# Create the index directory if it doesn't exist
 	os.makedirs(args.index_dir, exist_ok=True)
