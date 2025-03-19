@@ -1880,12 +1880,13 @@ def main():
 	api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY")
 	
 	if not api_key:
-		print_error("Anthropic API key is required. Please provide it via --api-key or set the ANTHROPIC_API_KEY environment variable.")
-		sys.exit(1)
+		print_error("Anthropic API key is required to use Claude.")
+		print_error("(optional) Please provide it via --api-key or set the ANTHROPIC_API_KEY environment variable.")
+		# sys.exit(1)
 	
 	# Check if document directory exists
 	if not os.path.exists(args.document_dir):
-		print_error(f"Document directory not found: {args.document_dir}")
+		print_system(f"Document directory not found: {args.document_dir}")
 		print_system("Document directory created.")
 		os.makedirs(args.document_dir, exist_ok=True)
 		print_system("Please add your projects and files in the 'documents' directory.")
@@ -2047,8 +2048,8 @@ def main():
 	documents = load_index(index_path, backup_dir, args.debug)
 	
 	if not documents:
-		print_error(f"No documents found in the project index. Please add documents and run indexing.")
-		sys.exit(1)
+		print_error(f"No documents found in the project index. Please add documents and run `index`.")
+		# sys.exit(1)
 	
 	# Display information about the embeddings in the index
 	if args.debug:
