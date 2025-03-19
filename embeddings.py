@@ -27,7 +27,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # Default models for each embedding type
 DEFAULT_MODELS = {
-	"sentence_transformers": "all-MiniLM-L6-v2",
+	"sentence_transformers": "all-mpnet-base-v2",
 	"openai": "text-embedding-3-small",
 	# Add other embedding types and their defaults here
 }
@@ -47,6 +47,7 @@ MODEL_DIMENSIONS = {
 	"text-embedding-ada-002": 1536,
 	# Add other models as needed
 }
+
 
 
 # class EmbeddingConfig:

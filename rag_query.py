@@ -90,6 +90,9 @@ API_TIMEOUT = 60  # Timeout for API calls in seconds
 MASTER_PROJECT = "master"  # Name for the master index
 PROMPTS_DIR = "prompts"  # Directory to save prompt logs
 
+# Make sure this is the same here and in document_indexer.py
+DEFAULT_CHARS_PER_DIMENSION = 4
+
 # For the different models
 # LLM types
 LLM_CLAUDE = "claude"
@@ -563,7 +566,8 @@ def get_project_embedding_config(project: str, document_dir: str, debug: bool = 
 
 
 def index_project(project: str, document_dir: str, index_dir: str, 
-				 debug: bool = False) -> bool:
+				 debug: bool = False, auto_adjust_chunks: bool = True,
+				 chars_per_dimension: int = 4) -> bool:
 	"""
 	Index a project using document_indexer.py.
 	Uses the project's embedding configuration if available.
@@ -602,6 +606,11 @@ def index_project(project: str, document_dir: str, index_dir: str,
 	
 	if project != MASTER_PROJECT:
 		cmd.extend(["--project", project])
+	
+	# Add auto-adjust-chunks flag if requested
+	if auto_adjust_chunks:
+		cmd.append("--auto-adjust-chunks")
+		cmd.extend(["--chars-per-dimension", str(chars_per_dimension)])
 	
 	if debug:
 		cmd.append("--debug")
@@ -1512,7 +1521,14 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	
 			elif query.lower() == 'index':
 				print_system(f"\nIndexing project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
-				success = index_project(current_project, document_dir, index_dir, debug)
+				success = index_project(
+					current_project, 
+					document_dir, 
+					index_dir, 
+					debug=debug,
+					auto_adjust_chunks=True,
+					chars_per_dimension=DEFAULT_CHARS_PER_DIMENSION
+				)
 				
 				if success:
 					# Reload the project index
@@ -1998,11 +2014,19 @@ def main():
 	# Handle indexing if requested
 	if args.index:
 		print_system(f"Indexing project: {HIGHLIGHT_COLOR}{args.project}{RESET_COLOR}")
-		success = index_project(args.project, args.document_dir, args.index_dir, args.debug)
+		success = index_project(
+			args.project, 
+			args.document_dir, 
+			args.index_dir, 
+			debug=args.debug,
+			auto_adjust_chunks=True,
+			chars_per_dimension=DEFAULT_CHARS_PER_DIMENSION
+		)
 		if not success:
 			print_error("Indexing failed. Exiting.")
 			sys.exit(1)
-	
+					
+						
 	# Get index path for the specified project
 	index_path, backup_dir = get_index_path(args.index_dir, args.project)
 	
