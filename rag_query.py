@@ -78,13 +78,14 @@ except ImportError:
 from embeddings import EmbeddingConfig, get_embedding_provider, load_project_config
 
 # Constants
-MODEL = "claude-3-opus-20240229"
-MAX_TOKENS = 4096
+# MODEL = "claude-3-opus-20240229"
+MODEL = "mistral-7b-openorca"
+MAX_TOKENS = 8096
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 DEFAULT_EMBEDDING_TYPE = "sentence_transformers"
-TOP_K_DOCUMENTS = 5
+TOP_K_DOCUMENTS = 3
 API_TIMEOUT = 60  # Timeout for API calls in seconds
 MASTER_PROJECT = "master"  # Name for the master index
 PROMPTS_DIR = "prompts"  # Directory to save prompt logs
@@ -234,78 +235,7 @@ class CommandHistory:
 			"""Get the last n history entries."""
 			return self.entries[-n:] if n <= len(self.entries) else self.entries
 
-# class EmbeddingProviderCache:
-# 	"""Caches embedding providers to avoid reloading models."""
-# 	
-# 	def __init__(self, debug=False):
-# 		"""Initialize the cache."""
-# 		self.providers = {}  # {(project, embedding_type, model_name): provider}
-# 		self.debug = debug
-# 	
-# 	def get_provider(self, project, document_dir, config=None):
-# 		"""
-# 		Get an embedding provider from the cache or create a new one.
-# 		
-# 		Args:
-# 			project: Project name
-# 			document_dir: Base document directory
-# 			config: Optional EmbeddingConfig (loads from project if not provided)
-# 			
-# 		Returns:
-# 			An embedding provider
-# 		"""
-# 		# If no config provided, load from project
-# 		if config is None:
-# 			config_path = get_project_config_path(project, document_dir)
-# 			if os.path.exists(config_path):
-# 				try:
-# 					config = EmbeddingConfig.from_json_file(config_path)
-# 					if self.debug:
-# 						print_debug(f"Loaded embedding config from: {config_path}")
-# 				except Exception as e:
-# 					if self.debug:
-# 						print_debug(f"Error loading config from {config_path}: {e}")
-# 					# Use defaults
-# 					config = EmbeddingConfig(
-# 						embedding_type=DEFAULT_EMBEDDING_TYPE,
-# 						model_name=DEFAULT_EMBEDDING_MODEL
-# 					)
-# 			else:
-# 				# Use defaults
-# 				config = EmbeddingConfig(
-# 					embedding_type=DEFAULT_EMBEDDING_TYPE,
-# 					model_name=DEFAULT_EMBEDDING_MODEL
-# 				)
-# 		
-# 		# Create a cache key from the project and config
-# 		cache_key = (project, config.embedding_type, config.model_name)
-# 		
-# 		# Check if we already have this provider in the cache
-# 		if cache_key in self.providers:
-# 			if self.debug:
-# 				print_debug(f"Using cached embedding provider for {cache_key}")
-# 			return self.providers[cache_key]
-# 		
-# 		# Create a new provider
-# 		if self.debug:
-# 			print_debug(f"Creating new embedding provider for {cache_key}")
-# 		
-# 		provider = get_embedding_provider(
-# 			project_dir=project,
-# 			document_dir=document_dir,
-# 			config=config,
-# 			debug=self.debug
-# 		)
-# 		
-# 		# Store in cache
-# 		self.providers[cache_key] = provider
-# 		return provider
-# 	
-# 	def clear_cache(self):
-# 		"""Clear the provider cache."""
-# 		self.providers.clear()
-# 		if self.debug:
-# 			print_debug("Cleared embedding provider cache")
+
 
 
 class EmbeddingProviderCache:
@@ -616,6 +546,8 @@ def get_project_embedding_config(project: str, document_dir: str, debug: bool = 
 				print_debug(f"Loaded project embedding config from: {config_path}")
 				print_debug(f"Embedding type: {config.embedding_type}")
 				print_debug(f"Embedding model: {config.model_name}")
+				print_debug(f"Embedding dimensions: {config.dimensions}")
+
 			return config
 		except Exception as e:
 			print_error(f"Error loading project config, using defaults: {e}")
@@ -1435,13 +1367,13 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	
 	# Initialize embedding provider cache
 	provider_cache = EmbeddingProviderCache(debug=debug)
-	
-	# Preload the embedding provider for the current project
-	print_system("Loading embedding model...")
-	start_time = time.time()
-	provider_cache.get_provider(current_project, document_dir, current_embedding_config)
-	load_time = time.time() - start_time
-	print_system(f"Embedding model loaded in {load_time:.2f} seconds")
+	# 
+	# # Preload the embedding provider for the current project
+	# print_system("Loading embedding model...")
+	# start_time = time.time()
+	# provider_cache.get_provider(current_project, document_dir, current_embedding_config)
+	# load_time = time.time() - start_time
+	# print_system(f"Embedding model loaded in {load_time:.2f} seconds")
 	
 	# Function to get the current model name based on LLM type
 	def get_current_model_name():
@@ -1724,6 +1656,8 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 					print_system(f"Switched to project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
 					print_system(f"Embedding Type: {current_embedding_config.embedding_type}")
 					print_system(f"Embedding Model: {current_embedding_config.model_name}")
+					print_system(f"Embedding Dimensions: {current_embedding_config.dimensions}")
+
 				else:
 					print_system(f"No documents found in project: {HIGHLIGHT_COLOR}{new_project}{RESET_COLOR}")
 				continue
@@ -1743,7 +1677,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				)
 				
 				# If we found relevant documents and not in debug mode, confirm before querying
-				if relevant_docs and not debug:
+				if relevant_docs and debug:
 					proceed = input(f"{SYSTEM_COLOR}Proceed with query using these sources? (Y/n): {RESET_COLOR}").strip().lower()
 					if proceed == 'n':
 						print_system("Query canceled")
@@ -1952,8 +1886,10 @@ def main():
 	# Check if document directory exists
 	if not os.path.exists(args.document_dir):
 		print_error(f"Document directory not found: {args.document_dir}")
-		print_system("Please create the document directory and add your files.")
-		sys.exit(1)
+		print_system("Document directory created.")
+		os.makedirs(args.document_dir, exist_ok=True)
+		print_system("Please add your projects and files in the 'documents' directory.")
+		# sys.exit(1)
 	
 	# Create the index directory if it doesn't exist
 	os.makedirs(args.index_dir, exist_ok=True)
@@ -2064,7 +2000,13 @@ def main():
 					print_system(f"  {HIGHLIGHT_COLOR}{project}{RESET_COLOR}")
 			sys.exit(1)
 	
+	# Print application info
+	print_system(f"RAG Query Application with Project Support")
+	print_system(f"Python version: {sys.version}")
+	print_system(f"Project: {HIGHLIGHT_COLOR}{args.project}{RESET_COLOR}")
+	print_system(f"Index location: {index_path}")
 	
+
 	# Create embedding provider cache
 	provider_cache = EmbeddingProviderCache(debug=args.debug)
 	
@@ -2089,15 +2031,11 @@ def main():
 
 	provider_cache.get_provider(args.project, args.document_dir, embedding_config)
 
-	
-	# Print application info
-	print_system(f"RAG Query Application with Project Support")
-	print_system(f"Python version: {sys.version}")
-	print_system(f"Project: {HIGHLIGHT_COLOR}{args.project}{RESET_COLOR}")
+	# Print more application info
+
 	print_system(f"Embedding Type: {embedding_config.embedding_type}")
 	print_system(f"Embedding Model: {embedding_config.model_name}")
-	print_system(f"Index location: {index_path}")
-	
+
 
 	
 	try:

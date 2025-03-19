@@ -18,23 +18,28 @@ A robust command-line Retrieval Augmented Generation (RAG) application that uses
 
 ## Installation
 
-1. Clone the repository:
 
-```bash
-git clone https://github.com/pricklypixie/ragdemo.git
-cd ragdemo
-```
-
-3. Create virtual environment
+1. Create virtual environment
 
 ```bash
 conda create -n ragdemo
 conda activate ragdemo
 ```
 
+2. Clone the repository:
+
+```bash
+git clone https://github.com/pricklypixie/ragdemo.git
+# for development branch
+# git clone -b development https://github.com/pricklypixie/ragdemo.git
+cd ragdemo
+```
+
+
 3. Install dependencies:
 
 ```bash
+conda install python==3.11.5
 pip install -r requirements.txt
 ```
 
@@ -204,11 +209,17 @@ Each project can have its own embedding configuration by adding an `embedding_co
    - OpenAI's embedding API
    - Recommended models: "text-embedding-3-small", "text-embedding-3-large"
    - Requires OpenAI API key (set via OPENAI_API_KEY environment variable)
+   
+For experimentation, there we see no benefit from running remote embedding models, unless there is a particular need for much larger embedding sizes.
 
 ### Example Configurations
 
 #### For multilingual documents:
 ```json
+// A HuggingFace User Access Tokens may be required to download
+// some sentence_transformers models
+// https://huggingface.co/sentence-transformers
+// 
 {
   "embedding_type": "sentence_transformers",
   "model_name": "paraphrase-multilingual-mpnet-base-v2"
