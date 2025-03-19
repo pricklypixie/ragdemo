@@ -79,13 +79,13 @@ from embeddings import EmbeddingConfig, get_embedding_provider, load_project_con
 
 # Constants
 # MODEL = "claude-3-opus-20240229"
-MODEL = "mistral-7b-openorca"
+MODEL = "mistral-7b-instruct-v0"
 MAX_TOKENS = 8096
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 DEFAULT_EMBEDDING_TYPE = "sentence_transformers"
-TOP_K_DOCUMENTS = 3
+TOP_K_DOCUMENTS = 5
 API_TIMEOUT = 60  # Timeout for API calls in seconds
 MASTER_PROJECT = "master"  # Name for the master index
 PROMPTS_DIR = "prompts"  # Directory to save prompt logs
@@ -619,7 +619,41 @@ def index_project(project: str, document_dir: str, index_dir: str,
 
 
 
-
+# def get_multiline_input(prompt: str) -> str:
+# 	"""
+# 	Get user input with proper handling of long lines in the terminal.
+# 	This ensures text scrolls up properly instead of overwriting the same line.
+# 	
+# 	Args:
+# 		prompt: The prompt to display before input
+# 		
+# 	Returns:
+# 		The user's input as a string
+# 	"""
+# 	# Print the prompt first
+# 	print(prompt, end="", flush=True)
+# 	
+# 	# Use a list to collect input lines
+# 	lines = []
+# 	line = ""
+# 	
+# 	while True:
+# 		char = sys.stdin.read(1)
+# 		
+# 		# Handle Enter key (line break)
+# 		if char == '\n':
+# 			return line
+# 		# Handle backspace
+# 		elif char == '\b' or ord(char) == 127:  # Different systems use different backspace codes
+# 			if line:
+# 				# Remove the last character
+# 				line = line[:-1]
+# 				# Clear the current line and reprint
+# 				print("\r" + " " * (len(prompt) + len(line) + 1) + "\r" + prompt + line, end="", flush=True)
+# 		# Normal character input
+# 		else:
+# 			line += char
+# 			print(char, end="", flush=True)
 
 
 
@@ -1367,13 +1401,6 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	
 	# Initialize embedding provider cache
 	provider_cache = EmbeddingProviderCache(debug=debug)
-	# 
-	# # Preload the embedding provider for the current project
-	# print_system("Loading embedding model...")
-	# start_time = time.time()
-	# provider_cache.get_provider(current_project, document_dir, current_embedding_config)
-	# load_time = time.time() - start_time
-	# print_system(f"Embedding model loaded in {load_time:.2f} seconds")
 	
 	# Function to get the current model name based on LLM type
 	def get_current_model_name():
@@ -1392,7 +1419,10 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			# Print the prompt with the current project and LLM highlighted
 			current_model = get_current_model_name()
 			prompt = f"\n{QUERY_COLOR}Enter your question [{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{QUERY_COLOR}] [{HIGHLIGHT_COLOR}{current_llm_type}:{current_model}{RESET_COLOR}{QUERY_COLOR}]: {RESET_COLOR}"
-			query = input(prompt).strip()
+			
+			# Use print and input separately to ensure proper scrolling behavior
+			print(prompt, end='', flush=True)
+			query = input().strip()
 			
 			if not query:
 				continue
@@ -1453,6 +1483,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				print_system(f"Project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
 				print_system(f"Embedding Type: {current_embedding_config.embedding_type}")
 				print_system(f"Embedding Model: {current_embedding_config.model_name}")
+				print_system(f"Embedding Dimensions: {current_embedding_config.dimensions}")
 				
 				# Show config file path
 				config_path = get_project_config_path(current_project, document_dir)
