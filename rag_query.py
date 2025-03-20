@@ -724,9 +724,70 @@ def get_project_embedding_config(project: str, document_dir: str, debug: bool = 
 	)
 
 
+# def index_project(project: str, document_dir: str, index_dir: str, 
+# 				 debug: bool = False, auto_adjust_chunks: bool = True,
+# 				 chars_per_dimension: int = 4) -> bool:
+# 	"""
+# 	Index a project using document_indexer.py.
+# 	Uses the project's embedding configuration if available.
+# 	
+# 	Returns True if indexing was successful, False otherwise.
+# 	"""
+# 	# First, check if we need to create a configuration file
+# 	config_path = get_project_config_path(project, document_dir)
+# 	
+# 	if not os.path.exists(config_path):
+# 		# Create a default configuration and save it
+# 		default_config = EmbeddingConfig(
+# 			embedding_type=DEFAULT_EMBEDDING_TYPE,
+# 			model_name=DEFAULT_EMBEDDING_MODEL
+# 		)
+# 		save_embedding_config(project, document_dir, default_config)
+# 		print_system(f"Created default embedding configuration at {config_path}")
+# 	
+# 	# Get the embedding config for the project
+# 	config = get_project_embedding_config(project, document_dir, debug)
+# 	
+# 	# Check for document_indexer.py
+# 	if not os.path.exists("document_indexer.py"):
+# 		print_error("document_indexer.py not found")
+# 		return False
+# 	
+# 	# Build the command
+# 	cmd = [
+# 		sys.executable,  # Current Python interpreter
+# 		"document_indexer.py",
+# 		"--document-dir", document_dir,
+# 		"--index-dir", index_dir,
+# 		"--embedding-type", config.embedding_type,
+# 		"--embedding-model", config.model_name
+# 	]
+# 	
+# 	if project != MASTER_PROJECT:
+# 		cmd.extend(["--project", project])
+# 	
+# 	# Add auto-adjust-chunks flag if requested
+# 	if auto_adjust_chunks:
+# 		cmd.append("--auto-adjust-chunks")
+# 		cmd.extend(["--chars-per-dimension", str(chars_per_dimension)])
+# 	
+# 	if debug:
+# 		cmd.append("--debug")
+# 		print_debug(f"Running indexer with command: {' '.join(cmd)}")
+# 	
+# 	# Run the indexer
+# 	print_system(f"Indexing project '{project}'...")
+# 	try:
+# 		result = subprocess.run(cmd, check=True)
+# 		print_system(f"Indexing complete for project '{project}'")
+# 		return True
+# 	except subprocess.CalledProcessError as e:
+# 		print_error(f"Error indexing project: {e}")
+# 		return False
+
 def index_project(project: str, document_dir: str, index_dir: str, 
-				 debug: bool = False, auto_adjust_chunks: bool = True,
-				 chars_per_dimension: int = 4) -> bool:
+			 debug: bool = False, auto_adjust_chunks: bool = True,
+			 chars_per_dimension: int = 4) -> bool:
 	"""
 	Index a project using document_indexer.py.
 	Uses the project's embedding configuration if available.
@@ -763,6 +824,8 @@ def index_project(project: str, document_dir: str, index_dir: str,
 		"--embedding-model", config.model_name
 	]
 	
+	# Important change: Only pass --project if it's not MASTER_PROJECT
+	# This ensures we only index the specified project
 	if project != MASTER_PROJECT:
 		cmd.extend(["--project", project])
 	
@@ -788,16 +851,27 @@ def index_project(project: str, document_dir: str, index_dir: str,
 
 
 
-
 def search_documents(query: str, documents: List[Document], project: str, 
-			   document_dir: str, embedding_config: Optional[EmbeddingConfig] = None,
-			   top_k: int = TOP_K_DOCUMENTS, debug: bool = False,
-			   provider_cache: Optional[EmbeddingProviderCache] = None) -> List[Document]:
+		   document_dir: str, embedding_config: Optional[EmbeddingConfig] = None,
+		   top_k: int = TOP_K_DOCUMENTS, debug: bool = False,
+		   provider_cache: Optional[EmbeddingProviderCache] = None,
+		   rag_mode: str = "chunk") -> List[Document]:
 	"""
-	Search for top-k distinct documents relevant to the query.
-	Documents are ranked by semantic similarity, but only one chunk per distinct document is returned.
+	Search for documents relevant to the query, handling different RAG modes.
 	
-	Uses a provider cache to avoid reloading models when possible.
+	Args:
+		query: The user's query
+		documents: All available documents
+		project: Current project name
+		document_dir: Base document directory
+		embedding_config: Optional embedding configuration
+		top_k: Number of results to return
+		debug: Enable debug output
+		provider_cache: Cache for embedding providers
+		rag_mode: RAG mode ("chunk", "file", or "none")
+		
+	Returns:
+		List of relevant documents based on the RAG mode
 	"""
 	if not documents:
 		print_system("No documents in index")
@@ -806,6 +880,8 @@ def search_documents(query: str, documents: List[Document], project: str,
 	if debug:
 		print_debug(f"Searching for: '{query}'")
 		print_debug(f"Using top_k value: {top_k}")
+		print_debug(f"RAG mode: {rag_mode}")
+		print_debug(f"Current project: {project}")
 	
 	# Try to import tqdm for progress bar
 	try:
@@ -815,6 +891,25 @@ def search_documents(query: str, documents: List[Document], project: str,
 		has_tqdm = False
 		if not debug:
 			print_system("For progress bars, install tqdm: pip install tqdm")
+	
+	# Handle master project - include documents from all projects
+	if project == MASTER_PROJECT:
+		if debug:
+			print_debug("Searching across all projects (master project)")
+		# Documents already contain all projects when using master
+	else:
+		if debug:
+			print_debug(f"Searching only in project: {project}")
+			
+			# Count how many documents we have from this project vs. total
+			project_docs = [doc for doc in documents if doc.metadata.get('project', MASTER_PROJECT) == project]
+			if debug:
+				print_debug(f"Found {len(project_docs)} documents in project {project} out of {len(documents)} total documents")
+			
+			# If we're not in the master project, we might want to filter to only this project's documents
+			# This depends on your application design - if you want to search only within the current project
+			# Uncomment the next line:
+			# documents = project_docs
 	
 	# Group documents by embedding model/type
 	document_groups = {}
@@ -939,29 +1034,63 @@ def search_documents(query: str, documents: List[Document], project: str,
 		# Sort all results by similarity score
 		sorted_results = sorted(all_results, key=lambda x: x[1], reverse=True)
 		
-		# Extract only the top-k DISTINCT documents by file path
-		top_distinct_results = []
-		distinct_files = set()
-		
-		for doc, sim in sorted_results:
-			# Get a unique identifier for this document (file path is a good choice)
-			file_path = doc.metadata.get('file_path', 'unknown')
+		# Different handling based on RAG mode
+		if rag_mode.lower() == "file":
+			# For file mode: extract top_k distinct files, but return all chunks from those files
+			distinct_files = set()
+			file_scores = {}  # {file_path: best_score}
 			
-			# Only add if we haven't seen this file yet
-			if file_path not in distinct_files:
-				top_distinct_results.append((doc, sim))
-				distinct_files.add(file_path)
-				
-				# Break once we have top_k distinct documents
-				if len(top_distinct_results) >= top_k:
-					break
+			# First pass: get best score for each file
+			for doc, sim in sorted_results:
+				file_path = doc.metadata.get('file_path', 'unknown')
+				if file_path not in file_scores or sim > file_scores[file_path]:
+					file_scores[file_path] = sim
+			
+			# Sort files by their best score
+			top_files = sorted(file_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+			
+			if debug:
+				print_debug(f"Top {len(top_files)} files by similarity score:")
+				for file_path, score in top_files:
+					print_debug(f"  {file_path}: {score:.4f}")
+			
+			# Set of top file paths
+			top_file_paths = {file_path for file_path, _ in top_files}
+			
+			# Collect all chunks from the top files, preserving original order within each file
+			file_chunks = {}  # {file_path: [(doc, score, chunk_index)]}
+			
+			for doc, sim in sorted_results:
+				file_path = doc.metadata.get('file_path', 'unknown')
+				if file_path in top_file_paths:
+					chunk_index = doc.metadata.get('chunk_index', 0)
+					if file_path not in file_chunks:
+						file_chunks[file_path] = []
+					file_chunks[file_path].append((doc, sim, chunk_index))
+			
+			# Sort chunks within each file by their original order
+			results_from_top_files = []
+			for file_path in top_file_paths:
+				if file_path in file_chunks:
+					# Sort by chunk index
+					sorted_chunks = sorted(file_chunks[file_path], key=lambda x: x[2])
+					# Add to final results
+					for doc, sim, _ in sorted_chunks:
+						results_from_top_files.append((doc, sim))
+			
+			# This will have all chunks from the top_k files
+			top_distinct_results = results_from_top_files
+			
+		else:
+			# Default "chunk" mode: just get top_k chunks regardless of file
+			top_distinct_results = sorted_results[:top_k]
 		
 		# Just get the documents without the scores
 		top_results = [doc for doc, sim in top_distinct_results]
 		
 		# In debug mode, print details about the relevant documents
 		if debug:
-			print_debug(f"Found {len(top_results)} distinct relevant documents:")
+			print_debug(f"Found {len(top_results)} relevant documents:")
 			for i, (doc, sim) in enumerate(top_distinct_results):
 				proj = doc.metadata.get('project', MASTER_PROJECT)
 				file_path = doc.metadata.get('file_path', 'unknown')
@@ -981,32 +1110,62 @@ def search_documents(query: str, documents: List[Document], project: str,
 		else:
 			# For regular users, show a neat summary of discovered documents
 			if top_results:
-				print_system(f"\nFound {len(top_results)} relevant sources:")
-				for i, (doc, sim) in enumerate(top_distinct_results):
+				# Count results by file to show a summary
+				file_counts = {}
+				for doc, sim in top_distinct_results:
 					file_path = doc.metadata.get('file_path', 'unknown')
-					
-					# Get just the filename from the path
 					file_name = os.path.basename(file_path)
+					if file_path not in file_counts:
+						file_counts[file_path] = {
+							'count': 0, 
+							'score': sim, 
+							'project': doc.metadata.get('project', MASTER_PROJECT),
+							'file_name': file_name
+						}
+					file_counts[file_path]['count'] += 1
+					# Keep track of best score for this file
+					if sim > file_counts[file_path]['score']:
+						file_counts[file_path]['score'] = sim
+				
+				# If in file mode, emphasize we're showing entire files
+				if rag_mode.lower() == "file":
+					print_system(f"\nFound {len(file_counts)} relevant files:")
+				else:
+					print_system(f"\nFound {len(top_results)} relevant chunks from {len(file_counts)} files:")
+				
+				# Show files sorted by best score
+				sorted_files = sorted(file_counts.items(), key=lambda x: x[1]['score'], reverse=True)
+				for i, (file_path, info) in enumerate(sorted_files):
+					# Get file name from the path
+					file_name = info['file_name']
 					
 					# Get project if different from current
-					doc_project = doc.metadata.get('project', MASTER_PROJECT)
+					doc_project = info['project']
 					project_info = f" (project: {doc_project})" if doc_project != project and doc_project != MASTER_PROJECT else ""
 					
 					# Format the similarity score as percentage
-					score_percent = int(sim * 100)
+					score_percent = int(info['score'] * 100)
+					
+					# Show chunk count if in chunk mode
+					count_info = f", {info['count']} chunks" if rag_mode.lower() == "chunk" and info['count'] > 1 else ""
 					
 					# Print a clean summary line
-					print_system(f"  {i+1}. {HIGHLIGHT_COLOR}{file_name}{RESET_COLOR}{SYSTEM_COLOR} - {score_percent}% match{project_info}")
+					print_system(f"  {i+1}. {HIGHLIGHT_COLOR}{file_name}{RESET_COLOR}{SYSTEM_COLOR} - {score_percent}% match{project_info}{count_info}")
 			else:
 				print_system("No relevant documents found in the index.")
 		
 		return top_results
-		
+	
 	except Exception as e:
 		print_error(f"Error during search: {e}")
 		if debug:
 			print(traceback.format_exc())
 		return []
+	
+	
+	
+	
+	
 
 
 # Function to handle retrieving full documents instead of chunks
