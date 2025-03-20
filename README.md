@@ -287,7 +287,7 @@ llm mlx download-model mlx-community/OLMo-2-0325-32B-Instruct-4bit
 
 And then within the application:
 
-llm mlx-community/OLMo-2-0325-32B-Instruct-4bit
+llm local mlx-community/OLMo-2-0325-32B-Instruct-4bit
 
 
 ## Troubleshooting
