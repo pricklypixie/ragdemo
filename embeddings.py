@@ -48,10 +48,21 @@ MODEL_DIMENSIONS = {
 	# Add other models as needed
 }
 
-
-
-
-
+# Default project configuration
+DEFAULT_PROJECT_CONFIG = {
+	"indexing": {
+		"embedding_type": "sentence_transformers",
+		"model_name": "all-mpnet-base-v2",
+		"api_key": None,
+		"additional_params": {}
+	},
+	"rag": {
+		"llm_type": "local",
+		"llm_model": "mistral-7b-instruct-v0",
+		"rag_mode": "chunk",
+		"rag_count": 3
+	}
+}
 
 class EmbeddingConfig:
 	"""Configuration for embedding generation."""
@@ -133,12 +144,40 @@ class EmbeddingConfig:
 		)
 	
 	@classmethod
-	def from_json_file(cls, config_path: str) -> 'EmbeddingConfig':
-		"""Load configuration from a JSON file."""
+	def from_indexing_config(cls, indexing_config: Dict[str, Any]) -> 'EmbeddingConfig':
+		"""Create configuration from the 'indexing' section of project config."""
+		if not indexing_config:
+			return cls.from_dict(DEFAULT_PROJECT_CONFIG["indexing"])
+		
+		return cls(
+			embedding_type=indexing_config.get("embedding_type", "sentence_transformers"),
+			model_name=indexing_config.get("model_name"),
+			api_key=indexing_config.get("api_key"),
+			additional_params=indexing_config.get("additional_params", {})
+		)
+	
+	@classmethod
+	def from_json_file(cls, config_path: str, legacy_format: bool = True) -> 'EmbeddingConfig':
+		"""
+		Load configuration from a JSON file.
+		
+		Args:
+			config_path: Path to the configuration file
+			legacy_format: If True, expects the old embedding_config.json format.
+						   If False, expects the new project_config.json format with 'indexing' section.
+		"""
 		try:
 			with open(config_path, 'r') as f:
 				config_dict = json.load(f)
-			return cls.from_dict(config_dict)
+			
+			if legacy_format:
+				# Old format: direct embedding config
+				return cls.from_dict(config_dict)
+			else:
+				# New format: project config with 'indexing' section
+				indexing_config = config_dict.get("indexing", {})
+				return cls.from_indexing_config(indexing_config)
+				
 		except Exception as e:
 			print(f"Error loading embedding configuration from {config_path}: {e}")
 			raise
@@ -153,20 +192,172 @@ class EmbeddingConfig:
 			"additional_params": self.additional_params
 		}
 	
-	def save_to_file(self, config_path: str) -> None:
-		"""Save configuration to a JSON file."""
+	def to_indexing_dict(self) -> Dict[str, Any]:
+		"""Convert to dictionary suitable for the 'indexing' section of project config."""
+		return {
+			"embedding_type": self.embedding_type,
+			"model_name": self.model_name,
+			"api_key": self.api_key,
+			"additional_params": self.additional_params
+		}
+	
+	def save_to_file(self, config_path: str, as_project_config: bool = False) -> None:
+		"""
+		Save configuration to a JSON file.
+		
+		Args:
+			config_path: Path to save the configuration
+			as_project_config: If True, save as part of a project_config.json file
+							  If False, save as a standalone embedding_config.json
+		"""
 		os.makedirs(os.path.dirname(config_path), exist_ok=True)
-		with open(config_path, 'w') as f:
-			# Don't save API key to file for security
-			config_dict = self.to_dict()
-			config_dict["api_key"] = None
-			json.dump(config_dict, f, indent=2)
+		
+		# Don't save API key to file for security
+		config_dict = self.to_dict()
+		config_dict["api_key"] = None
+		
+		if as_project_config:
+			# Save as part of project config
+			try:
+				# Load existing project config if it exists
+				if os.path.exists(config_path):
+					with open(config_path, 'r') as f:
+						project_config = json.load(f)
+				else:
+					# Start with default config
+					project_config = dict(DEFAULT_PROJECT_CONFIG)
+				
+				# Update the indexing section
+				project_config["indexing"] = {
+					"embedding_type": self.embedding_type,
+					"model_name": self.model_name,
+					"api_key": None,  # For security
+					"additional_params": self.additional_params
+				}
+				
+				with open(config_path, 'w') as f:
+					json.dump(project_config, f, indent=2)
+			except Exception as e:
+				print(f"Error saving project configuration: {e}")
+				raise
+		else:
+			# Save as standalone embedding config
+			with open(config_path, 'w') as f:
+				json.dump(config_dict, f, indent=2)
 	
 	def get_dimension(self) -> int:
 		"""Get the dimension of the embedding model."""
 		# Return the dimensions property, which should already be 
 		# set either from explicit value or lookup during initialization
 		return self.dimensions
+
+# Function to get the project configuration path (unified method)
+def get_project_config_path(project_dir: str, document_dir: str, use_legacy: bool = False) -> str:
+	"""
+	Get path to the project's configuration file.
+	
+	Args:
+		project_dir: Project directory or name
+		document_dir: Base documents directory
+		use_legacy: If True, returns path to legacy embedding_config.json, 
+				   otherwise returns path to project_config.json
+	
+	Returns:
+		Path to the configuration file
+	"""
+	if project_dir == "master":
+		# For master project, look in the document_dir
+		if use_legacy:
+			return os.path.join(document_dir, "embedding_config.json")
+		else:
+			return os.path.join(document_dir, "project_config.json")
+	else:
+		# For other projects, look in the project subdirectory
+		if use_legacy:
+			return os.path.join(document_dir, project_dir, "embedding_config.json")
+		else:
+			return os.path.join(document_dir, project_dir, "project_config.json")
+
+# Function to load project configuration
+def load_project_config_file(project_dir: str, document_dir: str) -> Dict[str, Any]:
+	"""
+	Load the project configuration from file.
+	
+	Args:
+		project_dir: Project directory or name
+		document_dir: Base documents directory
+	
+	Returns:
+		Project configuration dictionary
+	"""
+	config_path = get_project_config_path(project_dir, document_dir, use_legacy=False)
+	legacy_path = get_project_config_path(project_dir, document_dir, use_legacy=True)
+	
+	# Try to load the new format first
+	if os.path.exists(config_path):
+		try:
+			with open(config_path, 'r') as f:
+				return json.load(f)
+		except Exception as e:
+			print(f"Error loading project config, will try legacy format: {e}")
+	
+	# If new format doesn't exist or had an error, try legacy format
+	if os.path.exists(legacy_path):
+		try:
+			# Load the legacy embedding config
+			with open(legacy_path, 'r') as f:
+				embedding_config = json.load(f)
+			
+			# Convert to new format
+			project_config = dict(DEFAULT_PROJECT_CONFIG)
+			project_config["indexing"] = embedding_config
+			
+			return project_config
+		except Exception as e:
+			print(f"Error loading legacy config: {e}")
+	
+	# If neither exists or both had errors, return default
+	return dict(DEFAULT_PROJECT_CONFIG)
+
+# Modified function to load project's embedding configuration
+def load_project_config(project_dir: str, document_dir: str, default_config: Optional[EmbeddingConfig] = None) -> EmbeddingConfig:
+	"""
+	Load project-specific embedding configuration or use default.
+	
+	Args:
+		project_dir: Project directory or name
+		document_dir: Base documents directory
+		default_config: Default configuration to use if no project config exists
+		
+	Returns:
+		EmbeddingConfig for the project
+	"""
+	# First try the new project_config.json
+	config_path = get_project_config_path(project_dir, document_dir, use_legacy=False)
+	legacy_path = get_project_config_path(project_dir, document_dir, use_legacy=True)
+	
+	# Try loading from the new format first
+	if os.path.exists(config_path):
+		try:
+			# Load as new project config format
+			full_config = load_project_config_file(project_dir, document_dir)
+			return EmbeddingConfig.from_indexing_config(full_config.get("indexing", {}))
+		except Exception as e:
+			print(f"Error loading new project config format: {e}")
+	
+	# Try legacy format next
+	if os.path.exists(legacy_path):
+		try:
+			return EmbeddingConfig.from_json_file(legacy_path, legacy_format=True)
+		except Exception as e:
+			print(f"Error loading legacy project config: {e}")
+	
+	# If no configurations found or errors occurred, use default
+	if default_config is not None:
+		return default_config
+	else:
+		# Use defaults from DEFAULT_PROJECT_CONFIG
+		return EmbeddingConfig.from_indexing_config(DEFAULT_PROJECT_CONFIG["indexing"])
 
 class EmbeddingFactory:
 	"""Factory for creating embedding providers."""
@@ -189,60 +380,6 @@ class EmbeddingFactory:
 			return OpenAIEmbeddingProvider(config, debug)
 		else:
 			raise ValueError(f"Unsupported embedding type: {config.embedding_type}")
-
-
-# class BaseEmbeddingProvider:
-# 	"""Base class for embedding providers."""
-# 	
-# 	def __init__(self, config: EmbeddingConfig, debug: bool = False):
-# 		"""
-# 		Initialize the embedding provider.
-# 		
-# 		Args:
-# 			config: Embedding configuration
-# 			debug: Whether to enable debug logging
-# 		"""
-# 		self.config = config
-# 		self.debug = debug
-# 		self.model = None
-# 	
-# 	def debug_log(self, message: str) -> None:
-# 		"""Print debug message if debug mode is enabled."""
-# 		if self.debug:
-# 			print(f"[DEBUG] {message}")
-# 	
-# 	def load_model(self) -> None:
-# 		"""Load the embedding model."""
-# 		raise NotImplementedError("Subclasses must implement load_model")
-# 	
-# 	def create_embedding(self, text: str) -> List[float]:
-# 		"""
-# 		Create an embedding for the given text.
-# 		
-# 		Args:
-# 			text: Text to embed
-# 			
-# 		Returns:
-# 			List of floating point values representing the embedding
-# 		"""
-# 		raise NotImplementedError("Subclasses must implement create_embedding")
-# 	
-# 	def get_embedding_dimension(self) -> int:
-# 		"""Get the dimension of the embedding model."""
-# 		return self.config.get_dimension()
-# 	
-# 	def batch_create_embeddings(self, texts: List[str]) -> List[List[float]]:
-# 		"""
-# 		Create embeddings for multiple texts.
-# 		
-# 		Args:
-# 			texts: List of texts to embed
-# 			
-# 		Returns:
-# 			List of embeddings
-# 		"""
-# 		# Default implementation - override for more efficient batching
-# 		return [self.create_embedding(text) for text in texts]
 
 
 class BaseEmbeddingProvider:
@@ -333,31 +470,6 @@ class SentenceTransformersProvider(BaseEmbeddingProvider):
 				print(traceback.format_exc())
 			raise
 	
-	# def create_embedding(self, text: str) -> List[float]:
-	# 	"""Create an embedding using sentence-transformers."""
-	# 	if self.model is None:
-	# 		self.load_model()
-	# 	
-	# 	self.debug_log(f"Generating embedding for text of length {len(text)}")
-	# 	
-	# 	try:
-	# 		import torch
-	# 		with torch.no_grad():
-	# 			# Process a single item, no batching
-	# 			embedding = self.model.encode(
-	# 				text,
-	# 				convert_to_numpy=True,
-	# 				show_progress_bar=False,
-	# 				batch_size=1
-	# 			).tolist()
-	# 		
-	# 		self.debug_log(f"Generated embedding with dimension {len(embedding)}")
-	# 		return embedding
-	# 	except Exception as e:
-	# 		print(f"Error generating embedding: {e}")
-	# 		if self.debug:
-	# 			print(traceback.format_exc())
-	# 		return []
 	
 	def create_embedding(self, text: str) -> List[float]:
 		"""Create an embedding using sentence-transformers."""
@@ -464,41 +576,6 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
 				print(traceback.format_exc())
 			raise
 	
-	# def create_embedding(self, text: str) -> List[float]:
-	# 	"""Create an embedding using OpenAI's embedding API."""
-	# 	if self.model is None:
-	# 		self.load_model()
-	# 	
-	# 	self.debug_log(f"Generating OpenAI embedding for text of length {len(text)}")
-	# 	
-	# 	try:
-	# 		start_time = time.time()
-	# 		
-	# 		# Check if using legacy or new API
-	# 		if hasattr(self, 'legacy_api') and self.legacy_api:
-	# 			# Using older OpenAI API
-	# 			response = self.model.Embedding.create(
-	# 				model=self.config.model_name,
-	# 				input=text
-	# 			)
-	# 			embedding = response["data"][0]["embedding"]
-	# 		else:
-	# 			# Using newer OpenAI client
-	# 			response = self.model.embeddings.create(
-	# 				model=self.config.model_name,
-	# 				input=text
-	# 			)
-	# 			embedding = response.data[0].embedding
-	# 		
-	# 		elapsed_time = time.time() - start_time
-	# 		
-	# 		self.debug_log(f"Generated embedding with dimension {len(embedding)} in {elapsed_time:.2f}s")
-	# 		return embedding
-	# 	except Exception as e:
-	# 		print(f"Error generating OpenAI embedding: {e}")
-	# 		if self.debug:
-	# 			print(traceback.format_exc())
-	# 		return []
 	
 	
 	def create_embedding(self, text: str) -> List[float]:
@@ -536,40 +613,10 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
 			return []
 
 
-def load_project_config(project_dir: str, document_dir: str, default_config: EmbeddingConfig) -> EmbeddingConfig:
-	"""
-	Load project-specific embedding configuration or use default.
-	
-	Args:
-		project_dir: Project directory or name
-		document_dir: Base documents directory
-		default_config: Default configuration to use if no project config exists
-		
-	Returns:
-		EmbeddingConfig for the project
-	"""
-	if project_dir == "master":
-		# For master project, look in the document_dir
-		config_path = os.path.join(document_dir, "embedding_config.json")
-	else:
-		# For other projects, look in the project subdirectory
-		config_path = os.path.join(document_dir, project_dir, "embedding_config.json")
-	
-	if os.path.exists(config_path):
-		try:
-			return EmbeddingConfig.from_json_file(config_path)
-		except Exception as e:
-			print(f"Error loading project config, using default: {e}")
-			return default_config
-	else:
-		# No project-specific config found, use default
-		return default_config
-
-
 def get_embedding_provider(project_dir: str = "master", 
-						   document_dir: str = "documents",
-						   config: Optional[EmbeddingConfig] = None,
-						   debug: bool = False) -> BaseEmbeddingProvider:
+					   document_dir: str = "documents",
+					   config: Optional[EmbeddingConfig] = None,
+					   debug: bool = False) -> BaseEmbeddingProvider:
 	"""
 	Get the appropriate embedding provider for a project.
 	
@@ -592,6 +639,29 @@ def get_embedding_provider(project_dir: str = "master",
 	
 	# Create and return the provider
 	return EmbeddingFactory.create_provider(config, debug)
+
+
+# Save a complete project configuration
+def save_project_config(project_dir: str, document_dir: str, config: Dict[str, Any]) -> None:
+	"""
+	Save a complete project configuration to file.
+	
+	Args:
+		project_dir: Project directory or name
+		document_dir: Base documents directory
+		config: Configuration dictionary to save
+	"""
+	config_path = get_project_config_path(project_dir, document_dir, use_legacy=False)
+	os.makedirs(os.path.dirname(config_path), exist_ok=True)
+	
+	# Ensure we don't save API keys
+	if "indexing" in config and "api_key" in config["indexing"]:
+		config["indexing"]["api_key"] = None
+	
+	with open(config_path, 'w') as f:
+		json.dump(config, f, indent=2)
+	
+	print(f"Saved project configuration to {config_path}")
 
 
 # Simple test function

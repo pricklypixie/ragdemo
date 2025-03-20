@@ -427,14 +427,110 @@ def discover_projects(document_dir: str) -> List[str]:
 		return [MASTER_PROJECT]  # Return at least the master project
 
 
-def get_project_embedding_config(project: str, document_dir: str, debug: bool = False) -> Optional[EmbeddingConfig]:
-	"""Get project-specific embedding configuration if available."""
-	try:
-		return load_project_config(project, document_dir)
-	except Exception as e:
-		if debug:
-			print(f"[DEBUG] Error loading project config for {project}: {e}")
-		return None
+
+
+
+# Add these functions to document_indexer.py, replacing the existing function for project config
+
+def get_project_config_path(project: str, document_dir: str, use_legacy: bool = False) -> str:
+	"""
+	Get the path to the project's configuration file.
+	
+	Args:
+		project: Project name
+		document_dir: Base document directory
+		use_legacy: If True, returns path to legacy embedding_config.json, 
+				  otherwise returns path to project_config.json
+	
+	Returns:
+		Path to the configuration file
+	"""
+	if project == MASTER_PROJECT:
+		# For master project, look in the document_dir
+		if use_legacy:
+			return os.path.join(document_dir, "embedding_config.json")
+		else:
+			return os.path.join(document_dir, "project_config.json")
+	else:
+		# For other projects, look in the project subdirectory
+		if use_legacy:
+			return os.path.join(document_dir, project, "embedding_config.json")
+		else:
+			return os.path.join(document_dir, project, "project_config.json")
+
+def load_project_config(project: str, document_dir: str) -> Optional[EmbeddingConfig]:
+	"""
+	Load project-specific embedding configuration.
+	
+	Args:
+		project: Project name
+		document_dir: Base documents directory
+		
+	Returns:
+		EmbeddingConfig for the project or None if not found
+	"""
+	# Try new project_config.json first
+	config_path = get_project_config_path(project, document_dir, use_legacy=False)
+	if os.path.exists(config_path):
+		try:
+			with open(config_path, 'r') as f:
+				project_config = json.load(f)
+			
+			# Get the indexing section
+			indexing_config = project_config.get("indexing", {})
+			return EmbeddingConfig.from_dict(indexing_config)
+		except Exception as e:
+			print(f"Error loading project config from {config_path}: {e}")
+	
+	# Fall back to legacy embedding_config.json
+	legacy_path = get_project_config_path(project, document_dir, use_legacy=True)
+	if os.path.exists(legacy_path):
+		try:
+			return EmbeddingConfig.from_json_file(legacy_path)
+		except Exception as e:
+			print(f"Error loading legacy config from {legacy_path}: {e}")
+	
+	return None
+
+def save_project_config(project: str, document_dir: str, embedding_config: EmbeddingConfig = None) -> None:
+	"""
+	Save project configuration to file.
+	
+	Args:
+		project: The project name
+		document_dir: Base documents directory
+		embedding_config: Optional embedding configuration to include
+	"""
+	config_path = get_project_config_path(project, document_dir, use_legacy=False)
+	
+	# Create default project config
+	project_config = {
+		"indexing": {
+			"embedding_type": "sentence_transformers",
+			"model_name": "all-mpnet-base-v2",
+			"api_key": None,
+			"additional_params": {}
+		},
+		"rag": {
+			"llm_type": "local",
+			"llm_model": "mistral-7b-instruct-v0",
+			"rag_mode": "chunk",
+			"rag_count": 3
+		}
+	}
+	
+	# Update with the provided embedding config if available
+	if embedding_config:
+		project_config["indexing"] = embedding_config.to_indexing_dict()
+	
+	# Create directory if needed
+	os.makedirs(os.path.dirname(config_path), exist_ok=True)
+	
+	# Write the config file
+	with open(config_path, 'w') as f:
+		json.dump(project_config, f, indent=2)
+	
+	print(f"Saved project configuration to {config_path}")
 
 
 def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
