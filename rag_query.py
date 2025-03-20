@@ -78,12 +78,25 @@ except ImportError:
 from embeddings import EmbeddingConfig, get_embedding_provider, load_project_config
 
 # Constants
-# Update Claude model constants
+# Claude model constants
 CLAUDE_HAIKU = "claude-3-5-haiku-20241022"  # Default Claude model
 CLAUDE_SONNET = "claude-3-sonnet-20240229"
 CLAUDE_OPUS = "claude-3-opus-20240229"
 CLAUDE_HAIKU_LEGACY = "claude-3-haiku-20240307"
 CLAUDE_SONNET_LEGACY = "claude-3-sonnet-20240229"
+
+# OpenAI constants
+LLM_OPENAI = "openai"  # New LLM type for OpenAI
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"  # Default OpenAI model
+
+# Other OpenAI models
+OPENAI_O3_MINI = "o3-mini"
+OPENAI_GPT3_TURBO = "gpt-3.5-turbo"
+OPENAI_GPT4_TURBO = "gpt-4-turbo"
+OPENAI_GPT4 = "gpt-4"
+OPENAI_GPT4O = "gpt-4o"
+OPENAI_GPT4O_MINI = "gpt-4o-mini"
+
 
 DEFAULT_CLAUDE_MODEL = CLAUDE_HAIKU  # Change default to Haiku
 MAX_TOKENS = 8096
@@ -724,66 +737,7 @@ def get_project_embedding_config(project: str, document_dir: str, debug: bool = 
 	)
 
 
-# def index_project(project: str, document_dir: str, index_dir: str, 
-# 				 debug: bool = False, auto_adjust_chunks: bool = True,
-# 				 chars_per_dimension: int = 4) -> bool:
-# 	"""
-# 	Index a project using document_indexer.py.
-# 	Uses the project's embedding configuration if available.
-# 	
-# 	Returns True if indexing was successful, False otherwise.
-# 	"""
-# 	# First, check if we need to create a configuration file
-# 	config_path = get_project_config_path(project, document_dir)
-# 	
-# 	if not os.path.exists(config_path):
-# 		# Create a default configuration and save it
-# 		default_config = EmbeddingConfig(
-# 			embedding_type=DEFAULT_EMBEDDING_TYPE,
-# 			model_name=DEFAULT_EMBEDDING_MODEL
-# 		)
-# 		save_embedding_config(project, document_dir, default_config)
-# 		print_system(f"Created default embedding configuration at {config_path}")
-# 	
-# 	# Get the embedding config for the project
-# 	config = get_project_embedding_config(project, document_dir, debug)
-# 	
-# 	# Check for document_indexer.py
-# 	if not os.path.exists("document_indexer.py"):
-# 		print_error("document_indexer.py not found")
-# 		return False
-# 	
-# 	# Build the command
-# 	cmd = [
-# 		sys.executable,  # Current Python interpreter
-# 		"document_indexer.py",
-# 		"--document-dir", document_dir,
-# 		"--index-dir", index_dir,
-# 		"--embedding-type", config.embedding_type,
-# 		"--embedding-model", config.model_name
-# 	]
-# 	
-# 	if project != MASTER_PROJECT:
-# 		cmd.extend(["--project", project])
-# 	
-# 	# Add auto-adjust-chunks flag if requested
-# 	if auto_adjust_chunks:
-# 		cmd.append("--auto-adjust-chunks")
-# 		cmd.extend(["--chars-per-dimension", str(chars_per_dimension)])
-# 	
-# 	if debug:
-# 		cmd.append("--debug")
-# 		print_debug(f"Running indexer with command: {' '.join(cmd)}")
-# 	
-# 	# Run the indexer
-# 	print_system(f"Indexing project '{project}'...")
-# 	try:
-# 		result = subprocess.run(cmd, check=True)
-# 		print_system(f"Indexing complete for project '{project}'")
-# 		return True
-# 	except subprocess.CalledProcessError as e:
-# 		print_error(f"Error indexing project: {e}")
-# 		return False
+
 
 def index_project(project: str, document_dir: str, index_dir: str, 
 			 debug: bool = False, auto_adjust_chunks: bool = True,
@@ -1210,6 +1164,175 @@ def get_full_document_content(file_path, document_dir, debug=False):
 	
 
 
+def ask_openai(query: str, relevant_docs: List[Document], api_key: str, project: str, 
+			   debug: bool = False, prompts_dir: str = PROMPTS_DIR, 
+			   rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR,
+			   model: str = DEFAULT_OPENAI_MODEL) -> str:
+	"""
+	Process a user query and return OpenAI's response, using the specified RAG mode.
+	
+	Args:
+		query: The user's query
+		relevant_docs: List of relevant documents
+		api_key: OpenAI API key
+		project: Current project name
+		debug: Enable debug output
+		prompts_dir: Directory to save prompts for debugging
+		rag_mode: RAG mode to use (chunk, file, or none)
+		document_dir: Base document directory
+		model: OpenAI model to use
+		
+	Returns:
+		The response from OpenAI
+	"""
+	try:
+		# Import OpenAI here to avoid dependency issues if not used
+		from openai import OpenAI
+		
+		# Create client with API key
+		client = OpenAI(api_key=api_key)
+		
+		if rag_mode.lower() == "none":
+			# RAG mode 'none': Don't use any document context
+			prompt = f"""
+			User has asked: {query}
+			
+			Please answer this question based on your general knowledge.
+			You should NOT reference any specific documents in your answer.
+			"""
+			
+			if debug:
+				print_debug("Using RAG mode 'none' - no document context provided to OpenAI")
+				
+		elif not relevant_docs:
+			# If no relevant documents found, just ask OpenAI directly
+			prompt = f"""
+			User has asked: {query}
+			
+			I'm searching in the project: {project}
+			
+			Please note that I couldn't find any relevant documents in my knowledge base to help answer this question.
+			Please answer based on your general knowledge, and mention that no specific documents were found.
+			"""
+		elif rag_mode.lower() == "file":
+			# RAG mode 'file': Use entire documents instead of chunks
+			if debug:
+				print_debug(f"Using RAG mode 'file' - retrieving full documents for {len(relevant_docs)} sources")
+				
+			# Get distinct document file paths
+			distinct_file_paths = set()
+			for doc in relevant_docs:
+				file_path = doc.metadata.get('file_path', '')
+				if file_path and file_path not in distinct_file_paths:
+					distinct_file_paths.add(file_path)
+			
+			# Build context from full documents
+			context_pieces = []
+			for i, file_path in enumerate(distinct_file_paths):
+				# Get full document content
+				full_content = get_full_document_content(file_path, document_dir, debug)
+				
+				# Add document info
+				file_name = os.path.basename(file_path)
+				context_pieces.append(f"Document {i+1} (Source: {file_path}):\n{full_content}")
+			
+			context = "\n\n".join(context_pieces)
+			
+			# Prepare prompt with full document context
+			prompt = f"""
+			User has asked: {query}
+			
+			I'm searching in the project: {project}
+			
+			I've retrieved the following complete documents that might help answer this question:
+			
+			{context}
+			
+			Please answer the user's question based on the information in these documents.
+			If the documents don't contain the necessary information, please say so and answer based on your general knowledge.
+			In your answer, cite which documents you used.
+			"""
+		else:
+			# Default RAG mode 'chunk': Use document chunks (original behavior)
+			# Build context from relevant document chunks
+			context_pieces = []
+			for i, doc in enumerate(relevant_docs):
+				# Get document metadata
+				source = f"{doc.metadata.get('file_path', 'Unknown document')}"
+				doc_project = doc.metadata.get('project', MASTER_PROJECT)
+				
+				# Include chunk info in the source
+				chunk_info = f"Chunk {doc.metadata.get('chunk_index', 'unknown')+1}/{doc.metadata.get('total_chunks', 'unknown')}"
+				
+				# Add paragraph count and project if available
+				extra_info = []
+				if 'paragraphs' in doc.metadata:
+					extra_info.append(f"{doc.metadata.get('paragraphs')} paragraphs")
+				if doc_project != MASTER_PROJECT:
+					extra_info.append(f"project: {doc_project}")
+				
+				source_with_info = f"{source} ({chunk_info}, {', '.join(extra_info)})"
+				context_pieces.append(f"Document {i+1} (Source: {source_with_info}):\n{doc.content}")
+			
+			context = "\n\n".join(context_pieces)
+			
+			# Prepare prompt with context
+			prompt = f"""
+			User has asked: {query}
+			
+			I'm searching in the project: {project}
+			
+			I've retrieved the following document chunks that might help answer this question:
+			
+			{context}
+			
+			Please answer the user's question based on the information in these documents.
+			If the documents don't contain the necessary information, please say so and answer based on your general knowledge.
+			In your answer, cite which documents you used.
+			"""
+		
+		if debug:
+			print_debug(f"Sending prompt to OpenAI model: {model} using RAG mode: {rag_mode}")
+			
+			# Save the prompt to a JSON file
+			log_path = save_prompt_to_json(prompt, query, project, relevant_docs, prompts_dir, model)
+			if log_path:
+				print_debug(f"Saved prompt to {log_path}")
+		
+		# Set up timeout
+		signal.signal(signal.SIGALRM, timeout_handler)
+		signal.alarm(API_TIMEOUT)
+		
+		# Get response from OpenAI
+		start_time = time.time()
+		response = client.chat.completions.create(
+			model=model,
+			messages=[
+				{"role": "system", "content": "You are a helpful, accurate assistant that helps users find information in their documents."},
+				{"role": "user", "content": prompt}
+			],
+			max_completion_tokens=MAX_TOKENS
+		)
+		
+		# Cancel the alarm
+		signal.alarm(0)
+		
+		elapsed_time = time.time() - start_time
+		if debug:
+			print_debug(f"Received response from OpenAI ({model}) in {elapsed_time:.2f} seconds")
+		
+		# Extract the response text
+		return response.choices[0].message.content
+		
+	except APITimeoutError:
+		return "I'm sorry, but the request to OpenAI timed out. Please try again with a simpler question or check your internet connection."
+	except Exception as e:
+		if debug:
+			print(traceback.format_exc())
+		return f"I'm sorry, but an error occurred while processing your request with OpenAI: {str(e)}"
+	finally:
+		# Make sure to cancel the alarm
+		signal.alarm(0)
 
 
 
@@ -1873,6 +1996,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	current_local_model = rag_settings.get("llm_model", local_model) if current_llm_type == LLM_LOCAL else local_model
 	current_hf_model = rag_settings.get("llm_model", hf_model) if current_llm_type == LLM_HF else hf_model
 	current_claude_model = rag_settings.get("llm_model", claude_model) if current_llm_type == LLM_CLAUDE else claude_model
+	current_openai_model = rag_settings.get("llm_model", DEFAULT_OPENAI_MODEL) if current_llm_type == LLM_OPENAI else DEFAULT_OPENAI_MODEL
 	current_rag_mode = rag_settings.get("rag_mode", "chunk")
 	
 	# Priority for rag_count:
@@ -1893,15 +2017,20 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			return current_hf_model
 		elif current_llm_type == LLM_CLAUDE:
 			return current_claude_model
+		elif current_llm_type == LLM_OPENAI:
+			return current_openai_model
 		else:
-			return "unknown"
-	
+			return "unknown"	
+			
+			
+			
+			
 	# Function to save current RAG settings to project config
 	def save_current_rag_settings():
 		# Get current project config
 		project_config = load_project_config_file(current_project, document_dir)
 		
-		# Get current model based on LLM type (FIX: Using nonlocal variables directly)
+		# Get current model based on LLM type
 		model_to_save = None
 		if current_llm_type == LLM_LOCAL:
 			model_to_save = current_local_model
@@ -1909,6 +2038,8 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			model_to_save = current_hf_model
 		elif current_llm_type == LLM_CLAUDE:
 			model_to_save = current_claude_model
+		elif current_llm_type == LLM_OPENAI:
+			model_to_save = current_openai_model
 		
 		# Update RAG settings
 		project_config["rag"] = {
@@ -2131,6 +2262,22 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 					print_system(f"  Model: {HIGHLIGHT_COLOR}{current_hf_model}{RESET_COLOR}")
 				elif current_llm_type == LLM_CLAUDE:
 					print_system(f"  Model: {HIGHLIGHT_COLOR}{current_claude_model}{RESET_COLOR}")
+				elif current_llm_type == LLM_OPENAI:
+					print_system(f"  Model: {HIGHLIGHT_COLOR}{current_openai_model}{RESET_COLOR}")
+				
+				# Add OpenAI model listing
+				print_system("\nAvailable OpenAI models (--llm openai):")
+				openai_models = [
+					OPENAI_O3_MINI,
+					OPENAI_GPT3_TURBO,
+					OPENAI_GPT4_TURBO,
+					OPENAI_GPT4,
+					OPENAI_GPT4O,
+					OPENAI_GPT4O_MINI
+				]
+				for model in openai_models:
+					marker = "*" if model == current_openai_model and current_llm_type == LLM_OPENAI else " "
+					print_system(f"{marker} {HIGHLIGHT_COLOR}{model}{RESET_COLOR}")
 				
 				# Add Claude model listing
 				print_system("\nAvailable Claude models (--llm claude):")
@@ -2144,8 +2291,6 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				for model in claude_models:
 					marker = "*" if model == current_claude_model and current_llm_type == LLM_CLAUDE else " "
 					print_system(f"{marker} {HIGHLIGHT_COLOR}{model}{RESET_COLOR}")
-				
-				# Rest of the models command...
 
 				
 				# Try Simon Willison's llm library first
@@ -2219,6 +2364,59 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			
 			
 			# Modify the llm command handling part in interactive_mode function
+			# elif query.lower().startswith('llm '):
+			# 	# Parse the llm command with more intuitive syntax
+			# 	parts = query[4:].strip().split(maxsplit=1)
+			# 	llm_choice = parts[0].lower() if parts else ""
+			# 	model_arg = parts[1] if len(parts) > 1 else None
+			# 	
+			# 	if llm_choice == LLM_CLAUDE:
+			# 		current_llm_type = LLM_CLAUDE
+			# 		if model_arg:
+			# 			current_claude_model = model_arg
+			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with model: {HIGHLIGHT_COLOR}{current_claude_model}{RESET_COLOR}")
+			# 		else:
+			# 			current_claude_model = DEFAULT_CLAUDE_MODEL  # Reset to default if not specified
+			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_claude_model}{RESET_COLOR}")
+			# 		
+			# 		# Save changes to config
+			# 		save_current_rag_settings()
+			# 	
+			# 	elif llm_choice == LLM_LOCAL:
+			# 		current_llm_type = LLM_LOCAL
+			# 		if model_arg:
+			# 			current_local_model = model_arg
+			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with model: {HIGHLIGHT_COLOR}{current_local_model}{RESET_COLOR}")
+			# 		else:
+			# 			current_local_model = DEFAULT_LOCAL_MODEL  # Reset to default if not specified
+			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_local_model}{RESET_COLOR}")
+			# 		
+			# 		# Save changes to config
+			# 		save_current_rag_settings()
+			# 	
+			# 	elif llm_choice == LLM_HF:
+			# 		current_llm_type = LLM_HF
+			# 		if model_arg:
+			# 			current_hf_model = model_arg
+			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with model: {HIGHLIGHT_COLOR}{current_hf_model}{RESET_COLOR}")
+			# 		else:
+			# 			current_hf_model = DEFAULT_HF_MODEL  # Reset to default if not specified
+			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_hf_model}{RESET_COLOR}")
+			# 		
+			# 		# Save changes to config
+			# 		save_current_rag_settings()
+			# 	
+			# 	else:
+			# 		print_error(f"Unknown LLM type: {llm_choice}")
+			# 		print_system("Valid options are:")
+			# 		print_system("  llm claude [model_name]")
+			# 		print_system("  llm local [model_name]")
+			# 		print_system("  llm hf [model_name]")
+			# 	
+			# 	continue			
+			# 
+			
+			
 			elif query.lower().startswith('llm '):
 				# Parse the llm command with more intuitive syntax
 				parts = query[4:].strip().split(maxsplit=1)
@@ -2233,6 +2431,18 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 					else:
 						current_claude_model = DEFAULT_CLAUDE_MODEL  # Reset to default if not specified
 						print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_claude_model}{RESET_COLOR}")
+					
+					# Save changes to config
+					save_current_rag_settings()
+				
+				elif llm_choice == LLM_OPENAI:
+					current_llm_type = LLM_OPENAI
+					if model_arg:
+						current_openai_model = model_arg
+						print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with model: {HIGHLIGHT_COLOR}{current_openai_model}{RESET_COLOR}")
+					else:
+						current_openai_model = DEFAULT_OPENAI_MODEL  # Reset to default if not specified
+						print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_openai_model}{RESET_COLOR}")
 					
 					# Save changes to config
 					save_current_rag_settings()
@@ -2265,12 +2475,12 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 					print_error(f"Unknown LLM type: {llm_choice}")
 					print_system("Valid options are:")
 					print_system("  llm claude [model_name]")
+					print_system("  llm openai [model_name]")
 					print_system("  llm local [model_name]")
 					print_system("  llm hf [model_name]")
 				
-				continue			
-			
-			
+				continue
+
 			
 			elif query.lower().startswith('project '):
 				new_project = query[8:].strip()
@@ -2413,16 +2623,9 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				
 				
 def print_help_info(current_project: str, current_llm_type: str, current_model: str, 
-						  current_rag_mode: str, current_rag_count: int) -> None:
+									  current_rag_mode: str, current_rag_count: int) -> None:
 	"""
 	Print help information about available commands.
-	
-	Args:
-		current_project: The current project name
-		current_llm_type: The current LLM type
-		current_model: The current model name
-		current_rag_mode: The current RAG mode
-		current_rag_count: The current number of documents to retrieve
 	"""
 	print_system(f"\nRAG Query Application - Help")
 	print_system(f"Current Project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
@@ -2449,6 +2652,7 @@ def print_help_info(current_project: str, current_llm_type: str, current_model: 
 	print_system("\nLLM Commands:")
 	print_system("  models                   List available LLM models")
 	print_system("  llm claude [model_name]  Use Claude API (with optional model)")
+	print_system("  llm openai [model_name]  Use OpenAI API (with optional model)")
 	print_system("  llm local [model_name]   Use a local model via llm library")
 	print_system("  llm hf [model_name]      Use a Hugging Face model")
 	
@@ -2465,17 +2669,55 @@ def print_help_info(current_project: str, current_llm_type: str, current_model: 
 	
 	print_system("\nFor any other input, the application will treat it as a query")
 	print_system("and search for relevant documents to help answer it.")	
-	
 				
 				
+
+
+
+
+# def get_response(query: str, relevant_docs: List[Document], api_key: str, project: str, 
+# 			llm_type: str = LLM_CLAUDE, model_name: str = None,
+# 			debug: bool = False, prompts_dir: str = PROMPTS_DIR,
+# 			rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR) -> str:
+# 	"""
+# 	Get a response using the selected LLM.
+# 	"""
+# 	if llm_type.lower() == LLM_CLAUDE:
+# 		claude_model = model_name or DEFAULT_CLAUDE_MODEL
+# 		if debug:
+# 			print_debug(f"Using Claude API model: {claude_model} for response with RAG mode: {rag_mode}")
+# 		return ask_claude(query, relevant_docs, api_key, project, debug, prompts_dir, rag_mode, document_dir, claude_model)
+# 	
+# 	elif llm_type.lower() == LLM_LOCAL:
+# 		local_model = model_name or DEFAULT_LOCAL_MODEL
+# 		if debug:
+# 			print_debug(f"Using Simon Willison's llm with model: {local_model} and RAG mode: {rag_mode}")
+# 		try:
+# 			return ask_local_llm(query, relevant_docs, project, local_model, debug, prompts_dir, rag_mode, document_dir)
+# 		except Exception as e:
+# 			if debug:
+# 				print_debug(f"Error with local llm: {e}, falling back to Hugging Face")
+# 			# If Simon's llm fails, fall back to Hugging Face
+# 			return ask_local_hf(query, relevant_docs, project, DEFAULT_HF_MODEL, debug, prompts_dir, rag_mode, document_dir)
+# 	
+# 	elif llm_type.lower() == LLM_HF:
+# 		hf_model = model_name or DEFAULT_HF_MODEL
+# 		if debug:
+# 			print_debug(f"Using Hugging Face transformers with model: {hf_model} and RAG mode: {rag_mode}")
+# 		return ask_local_hf(query, relevant_docs, project, hf_model, debug, prompts_dir, rag_mode, document_dir)
+# 	
+# 	else:
+# 		print_error(f"Unknown LLM type: {llm_type}. Using Claude as fallback.")
+# 		return ask_claude(query, relevant_docs, api_key, project, debug, prompts_dir, rag_mode, document_dir, DEFAULT_CLAUDE_MODEL)
+
 
 
 
 
 def get_response(query: str, relevant_docs: List[Document], api_key: str, project: str, 
-			llm_type: str = LLM_CLAUDE, model_name: str = None,
-			debug: bool = False, prompts_dir: str = PROMPTS_DIR,
-			rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR) -> str:
+		llm_type: str = LLM_CLAUDE, model_name: str = None,
+		debug: bool = False, prompts_dir: str = PROMPTS_DIR,
+		rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR) -> str:
 	"""
 	Get a response using the selected LLM.
 	"""
@@ -2484,6 +2726,16 @@ def get_response(query: str, relevant_docs: List[Document], api_key: str, projec
 		if debug:
 			print_debug(f"Using Claude API model: {claude_model} for response with RAG mode: {rag_mode}")
 		return ask_claude(query, relevant_docs, api_key, project, debug, prompts_dir, rag_mode, document_dir, claude_model)
+	
+	elif llm_type.lower() == LLM_OPENAI:
+		openai_model = model_name or DEFAULT_OPENAI_MODEL
+		if debug:
+			print_debug(f"Using OpenAI API model: {openai_model} for response with RAG mode: {rag_mode}")
+		# For OpenAI, use the OPENAI_API_KEY environment variable if not provided
+		openai_api_key = api_key or os.environ.get("OPENAI_API_KEY")
+		if not openai_api_key:
+			return "OpenAI API key not provided. Please set the OPENAI_API_KEY environment variable or provide it via --api-key."
+		return ask_openai(query, relevant_docs, openai_api_key, project, debug, prompts_dir, rag_mode, document_dir, openai_model)
 	
 	elif llm_type.lower() == LLM_LOCAL:
 		local_model = model_name or DEFAULT_LOCAL_MODEL
@@ -2509,13 +2761,12 @@ def get_response(query: str, relevant_docs: List[Document], api_key: str, projec
 
 
 
-
 				
 def main():
 	"""Main entry point for the query application."""
 	parser = argparse.ArgumentParser(description="RAG Query Application with Project Support")
 	
-	parser.add_argument("--api-key", type=str, help="Anthropic API key")
+	parser.add_argument("--api-key", type=str, help="API key for selected LLM (Claude or OpenAI)")
 	parser.add_argument("--index-dir", type=str, default=DEFAULT_INDEX_DIR, 
 						help="Directory containing the document index")
 	parser.add_argument("--document-dir", type=str, default=DEFAULT_DOCUMENT_DIR,
@@ -2543,7 +2794,7 @@ def main():
 	
 	# for selecting the LLM
 	parser.add_argument("--llm", type=str, default=DEFAULT_LLM_TYPE,
-						help="LLM to use: 'claude' (default, uses API), 'local' (Simon Willison's llm), or 'hf' (Hugging Face)")
+						help="LLM to use: 'claude', 'openai', 'local' (Simon Willison's llm), or 'hf' (Hugging Face)")
 	parser.add_argument("--local-model", type=str, default=DEFAULT_LOCAL_MODEL,
 						help="Local model to use when --llm=local (default: gpt4all)")
 	parser.add_argument("--hf-model", type=str, default=DEFAULT_HF_MODEL,
@@ -2555,12 +2806,27 @@ def main():
 	parser.add_argument("--rag-count", type=int,
 						help=f"Number of documents to retrieve (default: {TOP_K_DOCUMENTS})")
 						
-	parser.add_argument("--model", type=str, default=DEFAULT_CLAUDE_MODEL,
-					   help="Claude model to use (when --llm=claude)")
-
-
+	parser.add_argument("--model", type=str, default=None,
+					   help="Model to use for the selected LLM")
 	
 	args = parser.parse_args()
+	
+	# Rest of the main function...
+	
+	# Update API key handling
+	api_key = args.api_key
+	if args.llm.lower() == LLM_CLAUDE:
+		api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+		if not api_key:
+			print_error("Anthropic API key is required to use Claude.")
+			print_error("Please provide it via --api-key or set the ANTHROPIC_API_KEY environment variable.")
+	elif args.llm.lower() == LLM_OPENAI:
+		api_key = api_key or os.environ.get("OPENAI_API_KEY")
+		if not api_key:
+			print_error("OpenAI API key is required to use OpenAI models.")
+			print_error("Please provide it via --api-key or set the OPENAI_API_KEY environment variable.")
+	
+
 	
 	# Set prompts directory from args (no need for global declaration)
 	if args.prompts_dir != PROMPTS_DIR:
@@ -2805,6 +3071,7 @@ def main():
 	
 	
 	# In the main function, for single query mode:
+	
 	if args.query:
 		# Single query mode
 		# Echo the query
@@ -2835,19 +3102,19 @@ def main():
 				sys.exit(0)
 		
 		# Determine the model name based on LLM type
-		model_name = None
-		if args.llm == LLM_LOCAL:
-			model_name = args.local_model
-		elif args.llm == LLM_HF:
-			model_name = args.hf_model
-		elif args.llm == LLM_CLAUDE:
-			model_name = args.model  # Use the specified Claude model
+		model_name = args.model  # Use model from command line if provided
+		if not model_name:
+			if args.llm == LLM_LOCAL:
+				model_name = args.local_model
+			elif args.llm == LLM_HF:
+				model_name = args.hf_model
+			elif args.llm == LLM_CLAUDE:
+				model_name = DEFAULT_CLAUDE_MODEL
+			elif args.llm == LLM_OPENAI:
+				model_name = DEFAULT_OPENAI_MODEL
 		
 		# Use the selected LLM
-		if args.llm == LLM_CLAUDE:
-			print_system(f"Generating answer with {args.llm} model: {model_name} (RAG mode: {rag_mode})...")
-		else:
-			print_system(f"Generating answer with {args.llm} {model_name} (RAG mode: {rag_mode})...")
+		print_system(f"Generating answer with {args.llm} model: {model_name} (RAG mode: {rag_mode})...")
 		
 		# Generate the response
 		answer = get_response(
@@ -2862,13 +3129,87 @@ def main():
 	
 	else:
 		# Interactive mode
+		# Determine the model based on the selected LLM
+		model_to_use = args.model
+		if not model_to_use:
+			if args.llm == LLM_CLAUDE:
+				model_to_use = DEFAULT_CLAUDE_MODEL
+			elif args.llm == LLM_OPENAI:
+				model_to_use = DEFAULT_OPENAI_MODEL
+			
 		interactive_mode(
 			documents, api_key, args.project, 
 			args.document_dir, args.index_dir, 
 			embedding_config, args.debug, prompts_dir,
-			args.llm, args.local_model, args.hf_model, args.model,  # Pass Claude model here
+			args.llm, args.local_model, args.hf_model, model_to_use,  # Pass model here
 			args.history_dir, args.rag_count
 		)
+
+	
+	# if args.query:
+	# 	# Single query mode
+	# 	# Echo the query
+	# 	print(f"{QUERY_COLOR}{args.query}{RESET_COLOR}\n")
+	# 	
+	# 	# Get RAG mode from project config
+	# 	rag_mode = rag_settings.get("rag_mode", "chunk")
+	# 	
+	# 	# In 'none' RAG mode, we skip the document search
+	# 	if rag_mode.lower() == "none":
+	# 		relevant_docs = []
+	# 		if args.debug:
+	# 			print_debug(f"Using RAG mode 'none' - skipping document search")
+	# 	else:
+	# 		print_system("Searching for relevant documents...")
+	# 		relevant_docs = search_documents(
+	# 			args.query, documents, args.project, 
+	# 			args.document_dir, embedding_config, 
+	# 			top_k=rag_count,
+	# 			debug=args.debug, provider_cache=provider_cache
+	# 		)
+	# 	
+	# 	# If we found relevant documents, confirm before querying
+	# 	if relevant_docs and not args.debug:
+	# 		proceed = input(f"{SYSTEM_COLOR}Proceed with query using these sources? (Y/n): {RESET_COLOR}").strip().lower()
+	# 		if proceed == 'n':
+	# 			print_system("Query canceled")
+	# 			sys.exit(0)
+	# 	
+	# 	# Determine the model name based on LLM type
+	# 	model_name = None
+	# 	if args.llm == LLM_LOCAL:
+	# 		model_name = args.local_model
+	# 	elif args.llm == LLM_HF:
+	# 		model_name = args.hf_model
+	# 	elif args.llm == LLM_CLAUDE:
+	# 		model_name = args.model  # Use the specified Claude model
+	# 	
+	# 	# Use the selected LLM
+	# 	if args.llm == LLM_CLAUDE:
+	# 		print_system(f"Generating answer with {args.llm} model: {model_name} (RAG mode: {rag_mode})...")
+	# 	else:
+	# 		print_system(f"Generating answer with {args.llm} {model_name} (RAG mode: {rag_mode})...")
+	# 	
+	# 	# Generate the response
+	# 	answer = get_response(
+	# 		args.query, relevant_docs, api_key, args.project,
+	# 		args.llm, model_name, args.debug, prompts_dir,
+	# 		rag_mode, args.document_dir  # Pass RAG mode and document_dir
+	# 	)
+	# 	
+	# 	# Print the answer with proper colors
+	# 	print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
+	# 	print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
+	# 
+	# else:
+	# 	# Interactive mode
+	# 	interactive_mode(
+	# 		documents, api_key, args.project, 
+	# 		args.document_dir, args.index_dir, 
+	# 		embedding_config, args.debug, prompts_dir,
+	# 		args.llm, args.local_model, args.hf_model, args.model,  # Pass Claude model here
+	# 		args.history_dir, args.rag_count
+	# 	)
 
 if __name__ == "__main__":
 	main()
