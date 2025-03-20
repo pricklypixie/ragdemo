@@ -79,16 +79,20 @@ from embeddings import EmbeddingConfig, get_embedding_provider, load_project_con
 
 # Constants
 # MODEL = "claude-3-opus-20240229"
-MODEL = "mistral-7b-openorca"
+MODEL = "claude-3-7-sonnet-20250219"
+# MODEL = "mistral-7b-instruct-v0"
 MAX_TOKENS = 8096
 DEFAULT_INDEX_DIR = "document_index"
 DEFAULT_DOCUMENT_DIR = "documents"
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 DEFAULT_EMBEDDING_TYPE = "sentence_transformers"
-TOP_K_DOCUMENTS = 3
-API_TIMEOUT = 60  # Timeout for API calls in seconds
+TOP_K_DOCUMENTS = 5
+API_TIMEOUT = 120  # Timeout for API calls in seconds
 MASTER_PROJECT = "master"  # Name for the master index
 PROMPTS_DIR = "prompts"  # Directory to save prompt logs
+
+# Make sure this is the same here and in document_indexer.py
+DEFAULT_CHARS_PER_DIMENSION = 4
 
 # For the different models
 # LLM types
@@ -98,7 +102,7 @@ LLM_HF = "hf"
 
 # Default models
 DEFAULT_LLM_TYPE = LLM_LOCAL
-DEFAULT_LOCAL_MODEL = "mistral-7b-openorca"
+DEFAULT_LOCAL_MODEL = "mistral-7b-instruct-v0"
 DEFAULT_HF_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 
@@ -563,7 +567,8 @@ def get_project_embedding_config(project: str, document_dir: str, debug: bool = 
 
 
 def index_project(project: str, document_dir: str, index_dir: str, 
-				 debug: bool = False) -> bool:
+				 debug: bool = False, auto_adjust_chunks: bool = True,
+				 chars_per_dimension: int = 4) -> bool:
 	"""
 	Index a project using document_indexer.py.
 	Uses the project's embedding configuration if available.
@@ -603,6 +608,11 @@ def index_project(project: str, document_dir: str, index_dir: str,
 	if project != MASTER_PROJECT:
 		cmd.extend(["--project", project])
 	
+	# Add auto-adjust-chunks flag if requested
+	if auto_adjust_chunks:
+		cmd.append("--auto-adjust-chunks")
+		cmd.extend(["--chars-per-dimension", str(chars_per_dimension)])
+	
 	if debug:
 		cmd.append("--debug")
 		print_debug(f"Running indexer with command: {' '.join(cmd)}")
@@ -616,9 +626,6 @@ def index_project(project: str, document_dir: str, index_dir: str,
 	except subprocess.CalledProcessError as e:
 		print_error(f"Error indexing project: {e}")
 		return False
-
-
-
 
 
 
@@ -941,6 +948,213 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 
 # to use Simon Willison's LLM library
 
+# def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local_model: str = "gpt4all", 
+# 				 debug: bool = False, prompts_dir: str = PROMPTS_DIR) -> str:
+# 	"""
+# 	Process a user query using Simon Willison's LLM library.
+# 	
+# 	Args:
+# 		query: The user's query
+# 		relevant_docs: List of relevant documents
+# 		project: Project name
+# 		local_model: Name of the local model to use
+# 		debug: Enable debug output
+# 		prompts_dir: Directory to save prompts for debugging
+# 		
+# 	Returns:
+# 		The LLM's response as a string
+# 	"""
+# 	try:
+# 		# Prepare prompt with the same format as for Claude
+# 		if not relevant_docs:
+# 			# If no relevant documents found
+# 			prompt_text = f"""
+# 			User has asked: {query}
+# 			
+# 			I'm searching in the project: {project}
+# 			
+# 			Please note that I couldn't find any relevant documents in my knowledge base to help answer this question.
+# 			Please answer based on your general knowledge, and mention that no specific documents were found.
+# 			"""
+# 		else:
+# 			# Build context from relevant documents
+# 			context_pieces = []
+# 			for i, doc in enumerate(relevant_docs):
+# 				# Get document metadata
+# 				source = f"{doc.metadata.get('file_path', 'Unknown document')}"
+# 				doc_project = doc.metadata.get('project', MASTER_PROJECT)
+# 				
+# 				# Include chunk info in the source
+# 				chunk_info = f"Chunk {doc.metadata.get('chunk_index', 'unknown')+1}/{doc.metadata.get('total_chunks', 'unknown')}"
+# 				
+# 				# Add paragraph count and project if available
+# 				extra_info = []
+# 				if 'paragraphs' in doc.metadata:
+# 					extra_info.append(f"{doc.metadata.get('paragraphs')} paragraphs")
+# 				if doc_project != MASTER_PROJECT:
+# 					extra_info.append(f"project: {doc_project}")
+# 				
+# 				source_with_info = f"{source} ({chunk_info}, {', '.join(extra_info)})"
+# 				context_pieces.append(f"Document {i+1} (Source: {source_with_info}):\n{doc.content}")
+# 			
+# 			context = "\n\n".join(context_pieces)
+# 			
+# 			# Prepare prompt with context
+# 			prompt_text = f"""
+# 			User has asked: {query}
+# 			
+# 			I'm searching in the project: {project}
+# 			
+# 			I've retrieved the following documents that might help answer this question:
+# 			
+# 			{context}
+# 			
+# 			Please answer the user's question based on the information in these documents.
+# 			If the documents don't contain the necessary information, please say so and answer based on your general knowledge.
+# 			In your answer, cite which documents you used.
+# 			"""
+# 		
+# 		if debug:
+# 			print_debug(f"Using Simon Willison's llm with model: {local_model}")
+# 			
+# 			# Save the prompt to a JSON file
+# 			log_path = save_prompt_to_json(prompt_text, query, project, relevant_docs, prompts_dir)
+# 			if log_path:
+# 				print_debug(f"Saved prompt to {log_path}")
+# 		
+# 		# Set up timeout
+# 		signal.signal(signal.SIGALRM, timeout_handler)
+# 		signal.alarm(API_TIMEOUT)
+# 		
+# 		try:
+# 			if debug:
+# 				print_debug("Importing llm library...")
+# 				
+# 			import llm
+# 			
+# 			start_time = time.time()
+# 			
+# 			# Try different methods to get models
+# 			model_names = []
+# 			
+# 			# Method 1: Try using llm.get_models()
+# 			try:
+# 				models = llm.get_models()
+# 				if models:
+# 					model_names = [getattr(m, 'model_id', str(m)) for m in models]
+# 					if debug:
+# 						print_debug(f"Found {len(model_names)} models via llm.get_models()")
+# 			except Exception as e:
+# 				if debug:
+# 					print_debug(f"Error with llm.get_models(): {e}")
+# 			
+# 			# Method 2: Try using llm.list_models() if available
+# 			if not model_names:
+# 				try:
+# 					if hasattr(llm, 'list_models'):
+# 						model_list = llm.list_models()
+# 						model_names = [str(m) for m in model_list]
+# 						if debug:
+# 							print_debug(f"Found {len(model_names)} models via llm.list_models()")
+# 				except Exception as e:
+# 					if debug:
+# 						print_debug(f"Error with llm.list_models(): {e}")
+# 			
+# 			# Method 3: Check if llm-gpt4all plugin is installed and list its models
+# 			if not model_names:
+# 				try:
+# 					# Try to import the specific gpt4all plugin
+# 					import llm_gpt4all
+# 					if hasattr(llm_gpt4all, 'get_models'):
+# 						plugin_models = llm_gpt4all.get_models()
+# 						model_names = [m.model_id for m in plugin_models]
+# 						if debug:
+# 							print_debug(f"Found {len(model_names)} models via llm_gpt4all plugin")
+# 				except ImportError:
+# 					if debug:
+# 						print_debug("llm_gpt4all plugin not found")
+# 			
+# 			if debug:
+# 				print_debug(f"Available models: {', '.join(model_names) if model_names else 'None found'}")
+# 			
+# 			# Use the specified model if available, otherwise use the first available model
+# 			if model_names:
+# 				if local_model in model_names:
+# 					try:
+# 						model = llm.get_model(local_model)
+# 						if debug:
+# 							print_debug(f"Using model: {local_model}")
+# 					except Exception as model_err:
+# 						if debug:
+# 							print_debug(f"Error loading specified model: {model_err}")
+# 						# Try using the first available model
+# 						try:
+# 							model = llm.get_model(model_names[0])
+# 							if debug:
+# 								print_debug(f"Using first available model: {model_names[0]}")
+# 						except:
+# 							raise ValueError(f"Could not load any models")
+# 				else:
+# 					try:
+# 						# Use the first available model
+# 						model = llm.get_model(model_names[0])
+# 						if debug:
+# 							print_debug(f"Model '{local_model}' not found, using '{model_names[0]}' instead")
+# 					except Exception as e:
+# 						if debug:
+# 							print_debug(f"Error loading first model: {e}")
+# 						raise ValueError(f"Model '{local_model}' not found and couldn't load alternatives")
+# 				
+# 				# Generate response
+# 				try:
+# 					if debug:
+# 						print_debug(f"Generating response with {model}")
+# 					
+# 					# Different versions of llm have slightly different APIs
+# 					try:
+# 						response = model.prompt(prompt_text)
+# 						result = str(response)
+# 					except AttributeError:
+# 						# Try alternate API style
+# 						response = model.complete(prompt_text)
+# 						result = response.text()
+# 					
+# 					elapsed_time = time.time() - start_time
+# 					if debug:
+# 						print_debug(f"Generated response in {elapsed_time:.2f} seconds")
+# 						# print_debug(prompt_text)
+# 					
+# 					# Cancel the alarm
+# 					signal.alarm(0)
+# 					
+# 					return result
+# 				except Exception as e:
+# 					if debug:
+# 						print_debug(f"Error generating response: {e}")
+# 					raise
+# 			else:
+# 				if debug:
+# 					print_debug("No models available through llm library")
+# 				raise ValueError("No local models available. Please install one using 'llm install'")
+# 				
+# 		except (ImportError, ModuleNotFoundError) as e:
+# 			if debug:
+# 				print_debug(f"llm library not found: {e}")
+# 			raise ImportError("Simon Willison's llm library is not installed. Please install it with: pip install llm")
+# 			
+# 	except APITimeoutError:
+# 		return "I'm sorry, but the local LLM timed out. Please try a simpler question or a lighter model."
+# 	except ImportError as ie:
+# 		return str(ie)
+# 	except Exception as e:
+# 		if debug:
+# 			print(traceback.format_exc())
+# 		return f"I'm sorry, but an error occurred while processing your request with the local LLM: {str(e)}"
+# 	finally:
+# 		# Make sure to cancel the alarm
+# 		signal.alarm(0)
+
+
 def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local_model: str = "gpt4all", 
 				 debug: bool = False, prompts_dir: str = PROMPTS_DIR) -> str:
 	"""
@@ -958,54 +1172,62 @@ def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local
 		The LLM's response as a string
 	"""
 	try:
-		# Prepare prompt with the same format as for Claude
+		# Prepare prompt with the new structure
 		if not relevant_docs:
 			# If no relevant documents found
 			prompt_text = f"""
-			User has asked: {query}
-			
-			I'm searching in the project: {project}
-			
-			Please note that I couldn't find any relevant documents in my knowledge base to help answer this question.
-			Please answer based on your general knowledge, and mention that no specific documents were found.
-			"""
+TASK:
+
+Please read very carefully the documents with the <DOCUMENTS> tag and use them to answer or address the following:
+
+{query}
+
+If you cannot address the question or task using the documents below, do not rely on your general knowledge.
+
+DOCUMENTS:
+
+<documents>
+No relevant documents were found in the database for project: {project}.
+</documents>
+
+Since no relevant documents were found, please let the user know you don't have specific information on this topic.
+"""
 		else:
 			# Build context from relevant documents
 			context_pieces = []
 			for i, doc in enumerate(relevant_docs):
 				# Get document metadata
-				source = f"{doc.metadata.get('file_path', 'Unknown document')}"
-				doc_project = doc.metadata.get('project', MASTER_PROJECT)
+				file_path = doc.metadata.get('file_path', 'Unknown document')
 				
-				# Include chunk info in the source
-				chunk_info = f"Chunk {doc.metadata.get('chunk_index', 'unknown')+1}/{doc.metadata.get('total_chunks', 'unknown')}"
-				
-				# Add paragraph count and project if available
-				extra_info = []
-				if 'paragraphs' in doc.metadata:
-					extra_info.append(f"{doc.metadata.get('paragraphs')} paragraphs")
-				if doc_project != MASTER_PROJECT:
-					extra_info.append(f"project: {doc_project}")
-				
-				source_with_info = f"{source} ({chunk_info}, {', '.join(extra_info)})"
-				context_pieces.append(f"Document {i+1} (Source: {source_with_info}):\n{doc.content}")
+				# Format the document with its ID and source
+				doc_text = f"""<document id={i+1}, source={file_path}>
+{doc.content}
+</document>"""
+				context_pieces.append(doc_text)
 			
-			context = "\n\n".join(context_pieces)
+			# Join all document contexts
+			documents_context = "\n\n".join(context_pieces)
 			
-			# Prepare prompt with context
+			# Prepare prompt with the new structure
 			prompt_text = f"""
-			User has asked: {query}
-			
-			I'm searching in the project: {project}
-			
-			I've retrieved the following documents that might help answer this question:
-			
-			{context}
-			
-			Please answer the user's question based on the information in these documents.
-			If the documents don't contain the necessary information, please say so and answer based on your general knowledge.
-			In your answer, cite which documents you used.
-			"""
+TASK:
+
+Please read very carefully the documents with the <DOCUMENTS> tag and use them to answer or address the following:
+
+{query}
+
+If you cannot address the question or task using the documents below, do not rely on your general knowledge.
+
+DOCUMENTS:
+
+<documents>
+{documents_context}
+</documents>
+
+REFERENCING:
+
+Provide a list of the documents you used, and how you made use of them at the end of your answer.
+"""
 		
 		if debug:
 			print_debug(f"Using Simon Willison's llm with model: {local_model}")
@@ -1115,6 +1337,8 @@ def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local
 					elapsed_time = time.time() - start_time
 					if debug:
 						print_debug(f"Generated response in {elapsed_time:.2f} seconds")
+						print_debug(prompt_text)
+
 					
 					# Cancel the alarm
 					signal.alarm(0)
@@ -1367,13 +1591,6 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	
 	# Initialize embedding provider cache
 	provider_cache = EmbeddingProviderCache(debug=debug)
-	# 
-	# # Preload the embedding provider for the current project
-	# print_system("Loading embedding model...")
-	# start_time = time.time()
-	# provider_cache.get_provider(current_project, document_dir, current_embedding_config)
-	# load_time = time.time() - start_time
-	# print_system(f"Embedding model loaded in {load_time:.2f} seconds")
 	
 	# Function to get the current model name based on LLM type
 	def get_current_model_name():
@@ -1392,7 +1609,10 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			# Print the prompt with the current project and LLM highlighted
 			current_model = get_current_model_name()
 			prompt = f"\n{QUERY_COLOR}Enter your question [{HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}{QUERY_COLOR}] [{HIGHLIGHT_COLOR}{current_llm_type}:{current_model}{RESET_COLOR}{QUERY_COLOR}]: {RESET_COLOR}"
-			query = input(prompt).strip()
+			
+			# Use print and input separately to ensure proper scrolling behavior
+			print(prompt, end='', flush=True)
+			query = input().strip()
 			
 			if not query:
 				continue
@@ -1453,6 +1673,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				print_system(f"Project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
 				print_system(f"Embedding Type: {current_embedding_config.embedding_type}")
 				print_system(f"Embedding Model: {current_embedding_config.model_name}")
+				print_system(f"Embedding Dimensions: {current_embedding_config.dimensions}")
 				
 				# Show config file path
 				config_path = get_project_config_path(current_project, document_dir)
@@ -1481,7 +1702,14 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	
 			elif query.lower() == 'index':
 				print_system(f"\nIndexing project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
-				success = index_project(current_project, document_dir, index_dir, debug)
+				success = index_project(
+					current_project, 
+					document_dir, 
+					index_dir, 
+					debug=debug,
+					auto_adjust_chunks=True,
+					chars_per_dimension=DEFAULT_CHARS_PER_DIMENSION
+				)
 				
 				if success:
 					# Reload the project index
@@ -1880,12 +2108,13 @@ def main():
 	api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY")
 	
 	if not api_key:
-		print_error("Anthropic API key is required. Please provide it via --api-key or set the ANTHROPIC_API_KEY environment variable.")
-		sys.exit(1)
+		print_error("Anthropic API key is required to use Claude.")
+		print_error("(optional) Please provide it via --api-key or set the ANTHROPIC_API_KEY environment variable.")
+		# sys.exit(1)
 	
 	# Check if document directory exists
 	if not os.path.exists(args.document_dir):
-		print_error(f"Document directory not found: {args.document_dir}")
+		print_system(f"Document directory not found: {args.document_dir}")
 		print_system("Document directory created.")
 		os.makedirs(args.document_dir, exist_ok=True)
 		print_system("Please add your projects and files in the 'documents' directory.")
@@ -1966,11 +2195,19 @@ def main():
 	# Handle indexing if requested
 	if args.index:
 		print_system(f"Indexing project: {HIGHLIGHT_COLOR}{args.project}{RESET_COLOR}")
-		success = index_project(args.project, args.document_dir, args.index_dir, args.debug)
+		success = index_project(
+			args.project, 
+			args.document_dir, 
+			args.index_dir, 
+			debug=args.debug,
+			auto_adjust_chunks=True,
+			chars_per_dimension=DEFAULT_CHARS_PER_DIMENSION
+		)
 		if not success:
 			print_error("Indexing failed. Exiting.")
 			sys.exit(1)
-	
+					
+						
 	# Get index path for the specified project
 	index_path, backup_dir = get_index_path(args.index_dir, args.project)
 	
@@ -2047,8 +2284,8 @@ def main():
 	documents = load_index(index_path, backup_dir, args.debug)
 	
 	if not documents:
-		print_error(f"No documents found in the project index. Please add documents and run indexing.")
-		sys.exit(1)
+		print_error(f"No documents found in the project index. Please add documents and run `index`.")
+		# sys.exit(1)
 	
 	# Display information about the embeddings in the index
 	if args.debug:

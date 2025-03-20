@@ -27,7 +27,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # Default models for each embedding type
 DEFAULT_MODELS = {
-	"sentence_transformers": "all-MiniLM-L6-v2",
+	"sentence_transformers": "all-mpnet-base-v2",
 	"openai": "text-embedding-3-small",
 	# Add other embedding types and their defaults here
 }
@@ -49,101 +49,8 @@ MODEL_DIMENSIONS = {
 }
 
 
-# class EmbeddingConfig:
-# 	"""Configuration for embedding generation."""
-# 	
-# 	def __init__(self, 
-# 				 embedding_type: str = "sentence_transformers",
-# 				 model_name: Optional[str] = None,
-# 				 dimensions: Optional[int] = 384,
-# 				 api_key: Optional[str] = None,
-# 				 additional_params: Optional[Dict[str, Any]] = None):
-# 		"""
-# 		Initialize embedding configuration.
-# 		
-# 		Args:
-# 			embedding_type: Type of embedding to use (e.g., "sentence_transformers", "openai")
-# 			model_name: Name of the model to use (if None, uses default for the type)
-# 			dimensions: Number of embedding dimensions used by the model (if None, will lookup if possible or use default) 
-# 			api_key: API key for services that require it
-# 			additional_params: Additional parameters for the embedding model
-# 		"""
-# 		self.embedding_type = embedding_type
-# 		self.dimensions = dimensions
-# 		
-# 		# Use default model if none specified
-# 		if model_name is None and embedding_type in DEFAULT_MODELS:
-# 			self.model_name = DEFAULT_MODELS[embedding_type]
-# 		else:
-# 			self.model_name = model_name
-# 		
-# 		self.api_key = api_key
-# 		self.additional_params = additional_params or {}
-# 		
-# 		# Validate configuration
-# 		self._validate()
-# 	
-# 	def _validate(self):
-# 		"""Validate the configuration."""
-# 		if not self.embedding_type:
-# 			raise ValueError("Embedding type must be specified")
-# 		
-# 		if not self.model_name:
-# 			raise ValueError(f"Model name must be specified for embedding type {self.embedding_type}")
-# 		
-# 		# Check if API key is required but not provided
-# 		if self.embedding_type == "openai" and not self.api_key:
-# 			# Try to get from environment
-# 			self.api_key = os.environ.get("OPENAI_API_KEY")
-# 			if not self.api_key:
-# 				raise ValueError("API key is required for OpenAI embeddings. Set OPENAI_API_KEY environment variable.")
-# 	
-# 	@classmethod
-# 	def from_dict(cls, config_dict: Dict[str, Any]) -> 'EmbeddingConfig':
-# 		"""Create configuration from a dictionary."""
-# 		return cls(
-# 			embedding_type=config_dict.get("embedding_type", "sentence_transformers"),
-# 			model_name=config_dict.get("model_name"),
-# 			api_key=config_dict.get("api_key"),
-# 			additional_params=config_dict.get("additional_params")
-# 		)
-# 	
-# 	@classmethod
-# 	def from_json_file(cls, config_path: str) -> 'EmbeddingConfig':
-# 		"""Load configuration from a JSON file."""
-# 		try:
-# 			with open(config_path, 'r') as f:
-# 				config_dict = json.load(f)
-# 			return cls.from_dict(config_dict)
-# 		except Exception as e:
-# 			print(f"Error loading embedding configuration from {config_path}: {e}")
-# 			raise
-# 	
-# 	def to_dict(self) -> Dict[str, Any]:
-# 		"""Convert configuration to a dictionary."""
-# 		return {
-# 			"embedding_type": self.embedding_type,
-# 			"model_name": self.model_name,
-# 			"api_key": self.api_key,
-# 			"additional_params": self.additional_params
-# 		}
-# 	
-# 	def save_to_file(self, config_path: str) -> None:
-# 		"""Save configuration to a JSON file."""
-# 		os.makedirs(os.path.dirname(config_path), exist_ok=True)
-# 		with open(config_path, 'w') as f:
-# 			# Don't save API key to file for security
-# 			config_dict = self.to_dict()
-# 			config_dict["api_key"] = None
-# 			json.dump(config_dict, f, indent=2)
-# 	
-# 	def get_dimension(self) -> int:
-# 		"""Get the dimension of the embedding model."""
-# 		if self.model_name in MODEL_DIMENSIONS:
-# 			return MODEL_DIMENSIONS[self.model_name]
-# 		else:
-# 			# Default size if unknown
-# 			return 768
+
+
 
 
 class EmbeddingConfig:
