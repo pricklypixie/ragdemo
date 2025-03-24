@@ -45,7 +45,7 @@ conda install python==3.11.5
 pip install -r requirements.txt
 ```
 
-4. Set up your Anthropic API key as an environment variable:
+4. Set up your Anthropic API key as an environment variable (optional - local models work)
 
 ```bash
 # On Linux/macOS
@@ -62,13 +62,15 @@ export HF_TOKEN=your-huggingface-token
 export OPENAI_API_KEY=your-openai-key
 
 
-6. To use on device models
+6. To use on device models (optional - test first)
 
 ```bash
-# Then install a model (e.g., GPT4All)
+# Then install an LLM model provider (e.g., GPT4All)
+## Not needed, in requirements file (Double check not needed).
 llm install gpt4all
 
 # Option 2: Install transformers
+## In requirements file
 pip install transformers torch
 ```
 
@@ -178,6 +180,13 @@ To manage the LLM used to answer the queries:
 - `llm local [model_name]` - Use a local model with llm library
 - `llm hf [model_name]` - Use a Hugging Face model
 
+- `system prompt "prompt"` - Set the system prompt
+- `system prompt show` - Show the current system prompt
+- `system prompt clear` - Clear the system prompt
+
+To manage defaults (useful when experimenting with different RAG settings):
+- `defaults save` - Save the defaults for a project (loaded when moving to the project)
+- `defaults read` - Read the faults for a project
 
 ## Configuration
 

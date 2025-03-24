@@ -23,6 +23,7 @@ import time
 import signal
 import traceback
 import subprocess
+import re
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 
@@ -616,6 +617,18 @@ def save_embedding_config(project: str, document_dir: str, config: EmbeddingConf
 	print_system(f"Saved project configuration to {config_path}")
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 def discover_projects(index_dir: str) -> List[str]:
 	"""Discover all indexed projects in the index directory."""
 	projects = []
@@ -1165,9 +1178,10 @@ def get_full_document_content(file_path, document_dir, debug=False):
 
 
 def ask_openai(query: str, relevant_docs: List[Document], api_key: str, project: str, 
-			   debug: bool = False, prompts_dir: str = PROMPTS_DIR, 
-			   rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR,
-			   model: str = DEFAULT_OPENAI_MODEL) -> str:
+		debug: bool = False, prompts_dir: str = PROMPTS_DIR, 
+		rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR,
+		model: str = DEFAULT_OPENAI_MODEL,
+		system_prompt: str = None) -> str:
 	"""
 	Process a user query and return OpenAI's response, using the specified RAG mode.
 	
@@ -1191,6 +1205,10 @@ def ask_openai(query: str, relevant_docs: List[Document], api_key: str, project:
 		
 		# Create client with API key
 		client = OpenAI(api_key=api_key)
+		
+		# Use the provided system prompt or a default one
+		system_message = system_prompt or "You are a helpful, accurate assistant that helps users find information in their documents."
+
 		
 		if rag_mode.lower() == "none":
 			# RAG mode 'none': Don't use any document context
@@ -1308,7 +1326,7 @@ def ask_openai(query: str, relevant_docs: List[Document], api_key: str, project:
 		response = client.chat.completions.create(
 			model=model,
 			messages=[
-				{"role": "system", "content": "You are a helpful, accurate assistant that helps users find information in their documents."},
+				{"role": "system", "content": system_message},  # Use system prompt here
 				{"role": "user", "content": prompt}
 			],
 			max_completion_tokens=MAX_TOKENS
@@ -1339,13 +1357,25 @@ def ask_openai(query: str, relevant_docs: List[Document], api_key: str, project:
 
 
 
+# Modify the ask_claude function to use the system prompt
 def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project: str, 
 	  debug: bool = False, prompts_dir: str = PROMPTS_DIR, 
 	  rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR,
-	  model: str = DEFAULT_CLAUDE_MODEL) -> str:
+	  model: str = DEFAULT_CLAUDE_MODEL,
+	  system_prompt: str = None) -> str:
 	"""Process a user query and return Claude's response, using the specified RAG mode."""
 	try:
 		client = anthropic.Anthropic(api_key=api_key)
+		
+		# Use the provided system prompt or a default one
+		system_message = system_prompt or "You are a helpful, accurate assistant that helps users find information in their documents."
+		
+		# Rest of the function remains the same...
+		
+		# Set up timeout
+		signal.signal(signal.SIGALRM, timeout_handler)
+		signal.alarm(API_TIMEOUT)
+		
 		
 		if rag_mode.lower() == "none":
 			# RAG mode 'none': Don't use any document context
@@ -1463,6 +1493,7 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 		response = client.messages.create(
 			model=model,
 			max_tokens=MAX_TOKENS,
+			system=system_message,  # Use system prompt here
 			messages=[
 				{"role": "user", "content": prompt}
 			]
@@ -1494,10 +1525,12 @@ def ask_claude(query: str, relevant_docs: List[Document], api_key: str, project:
 
 # to use Simon Willison's LLM library
 def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local_model: str = "gpt4all", 
-			 debug: bool = False, prompts_dir: str = PROMPTS_DIR, rag_mode: str = "chunk",
-			 document_dir: str = DEFAULT_DOCUMENT_DIR) -> str:
-	"""
-	Process a user query using Simon Willison's LLM library with the specified RAG mode.
+		debug: bool = False, prompts_dir: str = PROMPTS_DIR, rag_mode: str = "chunk",
+		document_dir: str = DEFAULT_DOCUMENT_DIR,
+		system_prompt: str = None) -> str:
+	
+	"""Process a user query using Simon Willison's LLM library.
+	using the specified RAG mode.
 	
 	Args:
 		query: The user's query
@@ -1513,6 +1546,10 @@ def ask_local_llm(query: str, relevant_docs: List[Document], project: str, local
 		The LLM's response as a string
 	"""
 	try:
+		
+		# Use provided system prompt or a default
+		system_message = system_prompt or "You are a helpful assistant that provides accurate information based on the provided documents."
+
 		# Prepare prompt based on RAG mode
 		if rag_mode.lower() == "none":
 			# No RAG context mode
@@ -1724,10 +1761,12 @@ Provide a list of the documents you used, and how you made use of them at the en
 					
 					# Different versions of llm have slightly different APIs
 					try:
-						response = model.prompt(prompt_text)
+						response = model.prompt(prompt_text, system=system_message)  # Use system prompt here
 						result = str(response)
 					except AttributeError:
-						# Try alternate API style
+						# Try alternate API style - if it doesn't support system prompts, integrate it into the prompt_text
+						if system_message:
+							prompt_text = f"SYSTEM INSTRUCTION: {system_message}\n\n{prompt_text}"
 						response = model.complete(prompt_text)
 						result = response.text()
 					
@@ -1769,8 +1808,9 @@ Provide a list of the documents you used, and how you made use of them at the en
 
 
 def ask_local_hf(query: str, relevant_docs: List[Document], project: str, local_model: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0", 
-					debug: bool = False, prompts_dir: str = PROMPTS_DIR, rag_mode: str = "chunk",
-					document_dir: str = DEFAULT_DOCUMENT_DIR) -> str:
+		debug: bool = False, prompts_dir: str = PROMPTS_DIR, rag_mode: str = "chunk",
+		document_dir: str = DEFAULT_DOCUMENT_DIR,
+		system_prompt: str = None) -> str:
 	"""Process a user query using Hugging Face transformers.
 	Args:
 		query: The user's query
@@ -1784,6 +1824,14 @@ def ask_local_hf(query: str, relevant_docs: List[Document], project: str, local_
 		The LLM's response as a string
 	"""
 	try:
+		
+		# Prepare prompt with system message
+		if system_message:
+			prompt_text = f"SYSTEM: {system_message}\n\n"
+		else:
+			prompt_text = "You are a helpful assistant that provides accurate information based on the provided documents."
+
+
 		# Prepare prompt with the same format as for Claude
 		if not relevant_docs:
 			# If no relevant documents found
@@ -1958,10 +2006,11 @@ def is_command(text: str) -> bool:
 		"index", "index clear",
 		"history", "history clear", "history save", 
 		"rag mode ", "rag count ",
+		"system prompt", "system prompt show", "system prompt clear",  # Add system prompt commands
+		"defaults save", "defaults read",
 		"exit", "quit", "llm ", "models"
 	]
 	return any(text.lower() == cmd or text.lower().startswith(cmd) for cmd in command_prefixes)
-
 		
 
 
@@ -1971,13 +2020,14 @@ def is_command(text: str) -> bool:
 	
 	
 def interactive_mode(documents: List[Document], api_key: str, project: str, 
-			document_dir: str, index_dir: str, 
-			embedding_config: Optional[EmbeddingConfig] = None,
-			debug: bool = False, prompts_dir: str = PROMPTS_DIR,
-			llm_type: str = LLM_CLAUDE, local_model: str = DEFAULT_LOCAL_MODEL,
-			hf_model: str = DEFAULT_HF_MODEL, claude_model: str = DEFAULT_CLAUDE_MODEL,
-			history_dir: str = "history",
-			rag_count: Optional[int] = None) -> None:
+		document_dir: str, index_dir: str, 
+		embedding_config: Optional[EmbeddingConfig] = None,
+		debug: bool = False, prompts_dir: str = PROMPTS_DIR,
+		llm_type: str = LLM_CLAUDE, local_model: str = DEFAULT_LOCAL_MODEL,
+		hf_model: str = DEFAULT_HF_MODEL, claude_model: str = DEFAULT_CLAUDE_MODEL,
+		history_dir: str = "history",
+		rag_count: Optional[int] = None,
+		system_prompt: Optional[str] = None) -> None:
 	"""Run the application in interactive mode."""
 	print_system(f"RAG Query Application - Interactive Mode (Project: {HIGHLIGHT_COLOR}{project}{RESET_COLOR}{SYSTEM_COLOR})")
 	print_system("Type 'help' to see available commands")
@@ -1999,16 +2049,6 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 	current_openai_model = rag_settings.get("llm_model", DEFAULT_OPENAI_MODEL) if current_llm_type == LLM_OPENAI else DEFAULT_OPENAI_MODEL
 	current_rag_mode = rag_settings.get("rag_mode", "chunk")
 	
-	# Priority for rag_count:
-	# 1. Command line argument
-	# 2. Project config
-	# 3. Default constant
-	
-	if rag_count is not None:
-		current_rag_count = rag_count
-	else:
-		current_rag_count = rag_settings.get("rag_count", TOP_K_DOCUMENTS)
-	
 	# Define get_current_model_name function BEFORE using it
 	def get_current_model_name():
 		if current_llm_type == LLM_LOCAL:
@@ -2021,9 +2061,174 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			return current_openai_model
 		else:
 			return "unknown"	
+
+	
+	# Initialize system prompt from:
+	# 1. Command line argument
+	# 2. Project config
+	# 3. System settings for the current model
+
+	current_system_prompt = None
+
+	if system_prompt:
+		current_system_prompt = system_prompt
+	elif "system_prompt" in rag_settings:
+		current_system_prompt = rag_settings.get("system_prompt")
+	else:
+		# Try to get from model-specific system prompts
+		current_model = get_current_model_name()
+		system_settings = project_config.get("system", {})
+		if current_model in system_settings:
+			current_system_prompt = system_settings[current_model].get("system_prompt")
+	
+	if debug and current_system_prompt:
+		print_debug(f"Using system prompt: \"{current_system_prompt}\"")
+	
+	if rag_count is not None:
+		current_rag_count = rag_count
+	else:
+		current_rag_count = rag_settings.get("rag_count", TOP_K_DOCUMENTS)
+		
 			
 			
+	# Add function to save system prompt to project config
+	def save_system_prompt(prompt: str, save_to_defaults: bool = False):
+		"""Save system prompt to the project configuration."""
+		project_config = load_project_config_file(current_project, document_dir)
+		
+		# Ensure rag section exists
+		if "rag" not in project_config:
+			project_config["rag"] = {}
+		
+		# Save to rag settings
+		project_config["rag"]["system_prompt"] = prompt
+		
+		# If requested, also save to defaults
+		if save_to_defaults:
+			if "defaults" not in project_config:
+				project_config["defaults"] = {}
+			project_config["defaults"]["system_prompt"] = prompt
 			
+			# Save to system settings for the current model
+			current_model = get_current_model_name()
+			if "system" not in project_config:
+				project_config["system"] = {}
+			
+			if current_model not in project_config["system"]:
+				project_config["system"][current_model] = {}
+			
+			project_config["system"][current_model]["system_prompt"] = prompt
+		
+		# Save the updated config
+		config_path = get_project_config_path(current_project, document_dir, use_legacy=False)
+		os.makedirs(os.path.dirname(config_path), exist_ok=True)
+		
+		with open(config_path, 'w') as f:
+			json.dump(project_config, f, indent=2)
+		
+		if debug:
+			print_debug(f"Saved system prompt to project config")
+			if save_to_defaults:
+				print_debug(f"Also saved to defaults and system settings for model: {current_model}")
+	
+	
+	# Modify save_current_settings_as_defaults function to include system prompt
+	def save_current_settings_as_defaults():
+		"""
+		Save the current RAG settings as defaults in the project configuration.
+		"""
+		
+		if debug:
+			print_debug("save_current_settings_as_defaults")
+		
+		# Get the current model name based on LLM type
+		current_model = get_current_model_name()
+		
+		# Get current project config
+		project_config = load_project_config_file(current_project, document_dir)
+		
+		# Ensure we have a defaults section
+		if "defaults" not in project_config:
+			project_config["defaults"] = {}
+		
+		# Copy current RAG settings to defaults
+		project_config["defaults"] = {
+			"llm_type": current_llm_type,
+			"llm_model": current_model,
+			"rag_mode": current_rag_mode,
+			"rag_count": current_rag_count
+		}
+		
+		# Add system prompt if available
+		if current_system_prompt:
+			project_config["defaults"]["system_prompt"] = current_system_prompt
+			
+			# Also save to system section for the current model
+			if "system" not in project_config:
+				project_config["system"] = {}
+				
+			if current_model not in project_config["system"]:
+				project_config["system"][current_model] = {}
+				
+			project_config["system"][current_model]["system_prompt"] = current_system_prompt
+		
+		# Save updated config
+		config_path = get_project_config_path(current_project, document_dir, use_legacy=False)
+		os.makedirs(os.path.dirname(config_path), exist_ok=True)
+		
+		with open(config_path, 'w') as f:
+			json.dump(project_config, f, indent=2)
+		
+		if debug:
+			print_debug(f"Saved current settings as defaults to {config_path}")
+			print_debug(f"  llm_type: {current_llm_type}")
+			print_debug(f"  llm_model: {current_model}")
+			print_debug(f"  rag_mode: {current_rag_mode}")
+			print_debug(f"  rag_count: {current_rag_count}")
+			if current_system_prompt:
+				print_debug(f"  system_prompt: \"{current_system_prompt}\"")
+		
+	# Modify load_defaults_to_current_settings to include system prompt
+	def load_defaults_to_current_settings():
+		"""
+		Load default settings from project configuration and apply them to current RAG settings.
+		
+		Returns:
+			Dictionary containing the loaded default settings or empty dict if none found
+		"""
+		# Get current project config
+		project_config = load_project_config_file(current_project, document_dir)
+		
+		# Check if we have defaults
+		if "defaults" not in project_config or not project_config["defaults"]:
+			if debug:
+				print_debug("No default settings found in project configuration")
+			return {}
+		
+		# Get defaults
+		defaults = project_config["defaults"]
+		
+		# Copy defaults to current RAG settings
+		project_config["rag"] = dict(defaults)
+		
+		# Save updated config
+		config_path = get_project_config_path(current_project, document_dir, use_legacy=False)
+		os.makedirs(os.path.dirname(config_path), exist_ok=True)
+		
+		with open(config_path, 'w') as f:
+			json.dump(project_config, f, indent=2)
+		
+		if debug:
+			print_debug(f"Loaded default settings to current RAG settings:")
+			print_debug(f"  llm_type: {defaults.get('llm_type')}")
+			print_debug(f"  llm_model: {defaults.get('llm_model')}")
+			print_debug(f"  rag_mode: {defaults.get('rag_mode')}")
+			print_debug(f"  rag_count: {defaults.get('rag_count')}")
+			if "system_prompt" in defaults:
+				print_debug(f"  system_prompt: \"{defaults.get('system_prompt')}\"")
+		
+		return defaults
+	
 			
 	# Function to save current RAG settings to project config
 	def save_current_rag_settings():
@@ -2031,15 +2236,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 		project_config = load_project_config_file(current_project, document_dir)
 		
 		# Get current model based on LLM type
-		model_to_save = None
-		if current_llm_type == LLM_LOCAL:
-			model_to_save = current_local_model
-		elif current_llm_type == LLM_HF:
-			model_to_save = current_hf_model
-		elif current_llm_type == LLM_CLAUDE:
-			model_to_save = current_claude_model
-		elif current_llm_type == LLM_OPENAI:
-			model_to_save = current_openai_model
+		model_to_save = get_current_model_name()
 		
 		# Update RAG settings
 		project_config["rag"] = {
@@ -2048,6 +2245,10 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			"rag_mode": current_rag_mode,
 			"rag_count": current_rag_count
 		}
+		
+		# Add system prompt if available
+		if current_system_prompt:
+			project_config["rag"]["system_prompt"] = current_system_prompt
 		
 		# Save updated config
 		config_path = get_project_config_path(current_project, document_dir, use_legacy=False)
@@ -2062,13 +2263,8 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			print_debug(f"  llm_model: {model_to_save}")
 			print_debug(f"  rag_mode: {current_rag_mode}")
 			print_debug(f"  rag_count: {current_rag_count}")
-	
-	if debug:
-		print_debug(f"Loaded RAG settings for project {project}:")
-		print_debug(f"LLM Type: {current_llm_type}")
-		print_debug(f"LLM Model: {get_current_model_name()}")
-		print_debug(f"RAG Mode: {current_rag_mode}")
-		print_debug(f"RAG Count: {current_rag_count}")
+			if current_system_prompt:
+				print_debug(f"  system_prompt: \"{current_system_prompt}\"")
 	
 	# Initialize history
 	history = CommandHistory(history_dir=history_dir)
@@ -2109,7 +2305,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				continue
 			
 			# Handle special commands
-			if query.lower() == 'history':
+			elif query.lower() == 'history':
 				# Show command history
 				entries = history.get_entries()
 				if not entries:
@@ -2136,9 +2332,71 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				if filepath:
 					print_system(f"History saved to: {filepath}")
 				continue
+				
+			# Add to the interactive_mode function where it handles commands
+			elif query.lower() == 'defaults save':
+				# Save current settings as defaults
+				save_current_settings_as_defaults()
+				
+				current_model = get_current_model_name()
+				print_system(f"Saved current settings as defaults:")
+				print_system(f"  LLM Type: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR}")
+				print_system(f"  LLM Model: {HIGHLIGHT_COLOR}{current_model}{RESET_COLOR}")
+				print_system(f"  RAG Mode: {HIGHLIGHT_COLOR}{current_rag_mode}{RESET_COLOR}")
+				print_system(f"  Document Count: {HIGHLIGHT_COLOR}{current_rag_count}{RESET_COLOR}")
+				if current_system_prompt:
+					print_system(f"  System Prompt: {HIGHLIGHT_COLOR}\"{current_system_prompt}\"{RESET_COLOR}")
+				continue
+			
+			elif query.lower() == 'defaults read':
+				# Load defaults to current settings
+				defaults = load_defaults_to_current_settings()
+				
+				if defaults:
+					# Update current variables with defaults
+					current_llm_type = defaults.get('llm_type', current_llm_type)
+					
+					# Update the appropriate model variable based on LLM type
+					model_name = defaults.get('llm_model', '')
+					if current_llm_type == LLM_LOCAL:
+						current_local_model = model_name or current_local_model
+					elif current_llm_type == LLM_HF:
+						current_hf_model = model_name or current_hf_model
+					elif current_llm_type == LLM_CLAUDE:
+						current_claude_model = model_name or current_claude_model
+					elif current_llm_type == LLM_OPENAI:
+						current_openai_model = model_name or current_openai_model
+					
+					current_rag_mode = defaults.get('rag_mode', current_rag_mode)
+					current_rag_count = defaults.get('rag_count', current_rag_count)
+					
+					# First check if there's a system prompt in defaults
+					if "system_prompt" in defaults:
+						current_system_prompt = defaults.get("system_prompt")
+					else:
+						# If not, check if there's a system prompt for the current model
+						current_model = get_current_model_name()
+						system_settings = project_config.get("system", {})
+						if current_model in system_settings:
+							model_settings = system_settings[current_model]
+							if "system_prompt" in model_settings:
+								current_system_prompt = model_settings["system_prompt"]
+					
+					print_system(f"Loaded default settings:")
+					print_system(f"  LLM Type: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR}")
+					print_system(f"  LLM Model: {HIGHLIGHT_COLOR}{get_current_model_name()}{RESET_COLOR}")
+					print_system(f"  RAG Mode: {HIGHLIGHT_COLOR}{current_rag_mode}{RESET_COLOR}")
+					print_system(f"  Document Count: {HIGHLIGHT_COLOR}{current_rag_count}{RESET_COLOR}")
+					if current_system_prompt:
+						print_system(f"  System Prompt: {HIGHLIGHT_COLOR}\"{current_system_prompt}\"{RESET_COLOR}")
+				else:
+					print_system("No default settings found in project configuration")
+				continue			
+			
+			
 			
 			# Handle other special commands
-			if query.lower() == 'projects':
+			elif query.lower() == 'projects':
 				projects = discover_projects(index_dir)
 				print_system("\nAvailable Projects:")
 				for p in projects:
@@ -2248,7 +2506,39 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 					print_system(f"Loaded {len(current_documents)} documents")
 				continue
 				
+			
+			
+			# Handle system prompt commands
+			elif query.lower() == 'system prompt show':
+				if current_system_prompt:
+					print_system(f"Current system prompt:")
+					print_system(f"{HIGHLIGHT_COLOR}\"{current_system_prompt}\"{RESET_COLOR}")
+				else:
+					print_system("No system prompt is currently set")
+				continue
 				
+			elif query.lower() == 'system prompt clear':
+				current_system_prompt = None
+				save_system_prompt(None)
+				print_system("System prompt cleared")
+				save_current_rag_settings()
+				continue
+				
+			elif query.lower().startswith('system prompt "') or query.lower().startswith('system prompt \''):
+				# Extract the prompt text between quotes
+				match = re.match(r'system prompt ["\'](.*)["\']$', query)
+				if match:
+					new_prompt = match.group(1)
+					current_system_prompt = new_prompt
+					save_system_prompt(new_prompt)
+					print_system(f"System prompt set to:")
+					print_system(f"{HIGHLIGHT_COLOR}\"{new_prompt}\"{RESET_COLOR}")
+					save_current_rag_settings()
+				else:
+					print_error("Invalid system prompt format. Use: system prompt \"your prompt here\"")
+				continue
+
+			
 				
 			# Add to the models command in interactive_mode
 			elif query.lower() == 'models':
@@ -2363,59 +2653,7 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			
 			
 			
-			# Modify the llm command handling part in interactive_mode function
-			# elif query.lower().startswith('llm '):
-			# 	# Parse the llm command with more intuitive syntax
-			# 	parts = query[4:].strip().split(maxsplit=1)
-			# 	llm_choice = parts[0].lower() if parts else ""
-			# 	model_arg = parts[1] if len(parts) > 1 else None
-			# 	
-			# 	if llm_choice == LLM_CLAUDE:
-			# 		current_llm_type = LLM_CLAUDE
-			# 		if model_arg:
-			# 			current_claude_model = model_arg
-			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with model: {HIGHLIGHT_COLOR}{current_claude_model}{RESET_COLOR}")
-			# 		else:
-			# 			current_claude_model = DEFAULT_CLAUDE_MODEL  # Reset to default if not specified
-			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_claude_model}{RESET_COLOR}")
-			# 		
-			# 		# Save changes to config
-			# 		save_current_rag_settings()
-			# 	
-			# 	elif llm_choice == LLM_LOCAL:
-			# 		current_llm_type = LLM_LOCAL
-			# 		if model_arg:
-			# 			current_local_model = model_arg
-			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with model: {HIGHLIGHT_COLOR}{current_local_model}{RESET_COLOR}")
-			# 		else:
-			# 			current_local_model = DEFAULT_LOCAL_MODEL  # Reset to default if not specified
-			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_local_model}{RESET_COLOR}")
-			# 		
-			# 		# Save changes to config
-			# 		save_current_rag_settings()
-			# 	
-			# 	elif llm_choice == LLM_HF:
-			# 		current_llm_type = LLM_HF
-			# 		if model_arg:
-			# 			current_hf_model = model_arg
-			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with model: {HIGHLIGHT_COLOR}{current_hf_model}{RESET_COLOR}")
-			# 		else:
-			# 			current_hf_model = DEFAULT_HF_MODEL  # Reset to default if not specified
-			# 			print_system(f"Changed LLM to: {HIGHLIGHT_COLOR}{current_llm_type}{RESET_COLOR} with default model: {HIGHLIGHT_COLOR}{current_hf_model}{RESET_COLOR}")
-			# 		
-			# 		# Save changes to config
-			# 		save_current_rag_settings()
-			# 	
-			# 	else:
-			# 		print_error(f"Unknown LLM type: {llm_choice}")
-			# 		print_system("Valid options are:")
-			# 		print_system("  llm claude [model_name]")
-			# 		print_system("  llm local [model_name]")
-			# 		print_system("  llm hf [model_name]")
-			# 	
-			# 	continue			
-			# 
-			
+
 			
 			elif query.lower().startswith('llm '):
 				# Parse the llm command with more intuitive syntax
@@ -2562,6 +2800,9 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 			
 			# Regular query - search for relevant documents
 			# Echo the query if it's not a command
+
+			# In the interactive_mode function, modify the query handling section:
+			# Regular query - search for relevant documents
 			if not is_command(query):
 				# Add a blank line after the query for better readability
 				print()
@@ -2599,16 +2840,18 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				# Ask the selected LLM
 				print_system(f"Generating answer with {current_llm_type} {model_name} (RAG mode: {current_rag_mode})...")
 				
-				# Pass the RAG mode to get_response
+				# Pass the system prompt to get_response
 				answer = get_response(
 					query, relevant_docs, api_key, current_project,
 					current_llm_type, model_name, debug, prompts_dir,
-					current_rag_mode, document_dir  # Pass RAG mode and document_dir
+					current_rag_mode, document_dir, current_system_prompt  # Pass system prompt
 				)
 				
 				# Print the answer with proper colors
 				print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
 				print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
+				
+				
 	
 		except KeyboardInterrupt:
 			print_system("\nInterrupted by user. Exiting...")
@@ -2623,15 +2866,25 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				
 				
 def print_help_info(current_project: str, current_llm_type: str, current_model: str, 
-									  current_rag_mode: str, current_rag_count: int) -> None:
+	current_rag_mode: str, current_rag_count: int,
+	current_system_prompt: str = None) -> None:		
 	"""
 	Print help information about available commands.
 	"""
-	print_system(f"\nRAG Query Application - Help")
+	
 	print_system(f"Current Project: {HIGHLIGHT_COLOR}{current_project}{RESET_COLOR}")
 	print_system(f"Current LLM: {HIGHLIGHT_COLOR}{current_llm_type}:{current_model}{RESET_COLOR}")
 	print_system(f"Current RAG Mode: {HIGHLIGHT_COLOR}{current_rag_mode}{RESET_COLOR}")
 	print_system(f"Document Count: {HIGHLIGHT_COLOR}{current_rag_count}{RESET_COLOR}")
+	
+	# Add system prompt info if available
+	if current_system_prompt:
+		# If the prompt is long, truncate it for display
+		display_prompt = current_system_prompt
+		if len(display_prompt) > 50:
+			display_prompt = display_prompt[:47] + "..."
+		print_system(f"System Prompt: {HIGHLIGHT_COLOR}\"{display_prompt}\"{RESET_COLOR}")
+
 	
 	print_system("\nAvailable Commands:")
 	print_system("  help                     Show this help information")
@@ -2648,6 +2901,14 @@ def print_help_info(current_project: str, current_llm_type: str, current_model: 
 	print_system("  index                    Re-index the current project")
 	print_system("  index clear              Clear the current project's index")
 	
+	# RAG commands
+	print_system("\nRAG Commands:")
+	print_system("  rag mode <mode>          Set RAG mode (chunk, file, none)")
+	print_system("  rag count <number>       Set number of documents to retrieve")
+	print_system("  defaults save            Save current settings as defaults")
+	print_system("  defaults read            Load default settings to current configuration")
+
+	
 	# LLM commands
 	print_system("\nLLM Commands:")
 	print_system("  models                   List available LLM models")
@@ -2656,11 +2917,13 @@ def print_help_info(current_project: str, current_llm_type: str, current_model: 
 	print_system("  llm local [model_name]   Use a local model via llm library")
 	print_system("  llm hf [model_name]      Use a Hugging Face model")
 	
-	# RAG commands
-	print_system("\nRAG Commands:")
-	print_system("  rag mode <mode>          Set RAG mode (chunk, file, none)")
-	print_system("  rag count <number>       Set number of documents to retrieve")
-	
+	# Add system prompt command to the help info
+	print_system("\nSystem Prompt Commands:")
+	print_system("  system prompt \"<prompt>\"  Set the system prompt for the current LLM")
+	print_system("  system prompt show        Show the current system prompt")
+	print_system("  system prompt clear       Clear the current system prompt")
+
+		
 	# History commands
 	print_system("\nHistory Commands:")
 	print_system("  history                  Show command history")
@@ -2675,41 +2938,6 @@ def print_help_info(current_project: str, current_llm_type: str, current_model: 
 
 
 
-# def get_response(query: str, relevant_docs: List[Document], api_key: str, project: str, 
-# 			llm_type: str = LLM_CLAUDE, model_name: str = None,
-# 			debug: bool = False, prompts_dir: str = PROMPTS_DIR,
-# 			rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR) -> str:
-# 	"""
-# 	Get a response using the selected LLM.
-# 	"""
-# 	if llm_type.lower() == LLM_CLAUDE:
-# 		claude_model = model_name or DEFAULT_CLAUDE_MODEL
-# 		if debug:
-# 			print_debug(f"Using Claude API model: {claude_model} for response with RAG mode: {rag_mode}")
-# 		return ask_claude(query, relevant_docs, api_key, project, debug, prompts_dir, rag_mode, document_dir, claude_model)
-# 	
-# 	elif llm_type.lower() == LLM_LOCAL:
-# 		local_model = model_name or DEFAULT_LOCAL_MODEL
-# 		if debug:
-# 			print_debug(f"Using Simon Willison's llm with model: {local_model} and RAG mode: {rag_mode}")
-# 		try:
-# 			return ask_local_llm(query, relevant_docs, project, local_model, debug, prompts_dir, rag_mode, document_dir)
-# 		except Exception as e:
-# 			if debug:
-# 				print_debug(f"Error with local llm: {e}, falling back to Hugging Face")
-# 			# If Simon's llm fails, fall back to Hugging Face
-# 			return ask_local_hf(query, relevant_docs, project, DEFAULT_HF_MODEL, debug, prompts_dir, rag_mode, document_dir)
-# 	
-# 	elif llm_type.lower() == LLM_HF:
-# 		hf_model = model_name or DEFAULT_HF_MODEL
-# 		if debug:
-# 			print_debug(f"Using Hugging Face transformers with model: {hf_model} and RAG mode: {rag_mode}")
-# 		return ask_local_hf(query, relevant_docs, project, hf_model, debug, prompts_dir, rag_mode, document_dir)
-# 	
-# 	else:
-# 		print_error(f"Unknown LLM type: {llm_type}. Using Claude as fallback.")
-# 		return ask_claude(query, relevant_docs, api_key, project, debug, prompts_dir, rag_mode, document_dir, DEFAULT_CLAUDE_MODEL)
-
 
 
 
@@ -2717,7 +2945,8 @@ def print_help_info(current_project: str, current_llm_type: str, current_model: 
 def get_response(query: str, relevant_docs: List[Document], api_key: str, project: str, 
 		llm_type: str = LLM_CLAUDE, model_name: str = None,
 		debug: bool = False, prompts_dir: str = PROMPTS_DIR,
-		rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR) -> str:
+		rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR,
+		system_prompt: str = None) -> str:
 	"""
 	Get a response using the selected LLM.
 	"""
@@ -2725,39 +2954,47 @@ def get_response(query: str, relevant_docs: List[Document], api_key: str, projec
 		claude_model = model_name or DEFAULT_CLAUDE_MODEL
 		if debug:
 			print_debug(f"Using Claude API model: {claude_model} for response with RAG mode: {rag_mode}")
-		return ask_claude(query, relevant_docs, api_key, project, debug, prompts_dir, rag_mode, document_dir, claude_model)
+			if system_prompt:
+				print_debug(f"Using system prompt: \"{system_prompt}\"")
+		return ask_claude(query, relevant_docs, api_key, project, debug, prompts_dir, rag_mode, document_dir, claude_model, system_prompt)
 	
 	elif llm_type.lower() == LLM_OPENAI:
 		openai_model = model_name or DEFAULT_OPENAI_MODEL
 		if debug:
 			print_debug(f"Using OpenAI API model: {openai_model} for response with RAG mode: {rag_mode}")
+			if system_prompt:
+				print_debug(f"Using system prompt: \"{system_prompt}\"")
 		# For OpenAI, use the OPENAI_API_KEY environment variable if not provided
 		openai_api_key = api_key or os.environ.get("OPENAI_API_KEY")
 		if not openai_api_key:
 			return "OpenAI API key not provided. Please set the OPENAI_API_KEY environment variable or provide it via --api-key."
-		return ask_openai(query, relevant_docs, openai_api_key, project, debug, prompts_dir, rag_mode, document_dir, openai_model)
+		return ask_openai(query, relevant_docs, openai_api_key, project, debug, prompts_dir, rag_mode, document_dir, openai_model, system_prompt)
 	
 	elif llm_type.lower() == LLM_LOCAL:
 		local_model = model_name or DEFAULT_LOCAL_MODEL
 		if debug:
 			print_debug(f"Using Simon Willison's llm with model: {local_model} and RAG mode: {rag_mode}")
+			if system_prompt:
+				print_debug(f"Using system prompt: \"{system_prompt}\"")
 		try:
-			return ask_local_llm(query, relevant_docs, project, local_model, debug, prompts_dir, rag_mode, document_dir)
+			return ask_local_llm(query, relevant_docs, project, local_model, debug, prompts_dir, rag_mode, document_dir, system_prompt)
 		except Exception as e:
 			if debug:
 				print_debug(f"Error with local llm: {e}, falling back to Hugging Face")
 			# If Simon's llm fails, fall back to Hugging Face
-			return ask_local_hf(query, relevant_docs, project, DEFAULT_HF_MODEL, debug, prompts_dir, rag_mode, document_dir)
+			return ask_local_hf(query, relevant_docs, project, DEFAULT_HF_MODEL, debug, prompts_dir, rag_mode, document_dir, system_prompt)
 	
 	elif llm_type.lower() == LLM_HF:
 		hf_model = model_name or DEFAULT_HF_MODEL
 		if debug:
 			print_debug(f"Using Hugging Face transformers with model: {hf_model} and RAG mode: {rag_mode}")
-		return ask_local_hf(query, relevant_docs, project, hf_model, debug, prompts_dir, rag_mode, document_dir)
+			if system_prompt:
+				print_debug(f"Using system prompt: \"{system_prompt}\"")
+		return ask_local_hf(query, relevant_docs, project, hf_model, debug, prompts_dir, rag_mode, document_dir, system_prompt)
 	
 	else:
 		print_error(f"Unknown LLM type: {llm_type}. Using Claude as fallback.")
-		return ask_claude(query, relevant_docs, api_key, project, debug, prompts_dir, rag_mode, document_dir, DEFAULT_CLAUDE_MODEL)
+		return ask_claude(query, relevant_docs, api_key, project, debug, prompts_dir, rag_mode, document_dir, DEFAULT_CLAUDE_MODEL, system_prompt)
 
 
 
@@ -2808,6 +3045,11 @@ def main():
 						
 	parser.add_argument("--model", type=str, default=None,
 					   help="Model to use for the selected LLM")
+					   
+	# add argument for system prompt
+	parser.add_argument("--system-prompt", type=str, 
+	   					help="System prompt to use for the LLM")
+
 	
 	args = parser.parse_args()
 	
@@ -3080,6 +3322,18 @@ def main():
 		# Get RAG mode from project config
 		rag_mode = rag_settings.get("rag_mode", "chunk")
 		
+		# Get system prompt from args or project config
+		system_prompt = args.system_prompt
+		if not system_prompt:
+			system_prompt = rag_settings.get("system_prompt")
+			
+			# If no system prompt in rag settings, check system section
+			if not system_prompt:
+				model_name = args.model or get_model_name_for_llm_type(args.llm)
+				system_settings = project_config.get("system", {})
+				if model_name in system_settings:
+					system_prompt = system_settings[model_name].get("system_prompt")
+		
 		# In 'none' RAG mode, we skip the document search
 		if rag_mode.lower() == "none":
 			relevant_docs = []
@@ -3093,6 +3347,8 @@ def main():
 				top_k=rag_count,
 				debug=args.debug, provider_cache=provider_cache
 			)
+	
+	
 		
 		# If we found relevant documents, confirm before querying
 		if relevant_docs and not args.debug:
@@ -3120,7 +3376,7 @@ def main():
 		answer = get_response(
 			args.query, relevant_docs, api_key, args.project,
 			args.llm, model_name, args.debug, prompts_dir,
-			rag_mode, args.document_dir  # Pass RAG mode and document_dir
+			rag_mode, args.document_dir, system_prompt  # Pass system prompt here
 		)
 		
 		# Print the answer with proper colors
@@ -3137,79 +3393,17 @@ def main():
 			elif args.llm == LLM_OPENAI:
 				model_to_use = DEFAULT_OPENAI_MODEL
 			
+		# Pass system_prompt to interactive_mode
 		interactive_mode(
 			documents, api_key, args.project, 
 			args.document_dir, args.index_dir, 
 			embedding_config, args.debug, prompts_dir,
-			args.llm, args.local_model, args.hf_model, model_to_use,  # Pass model here
-			args.history_dir, args.rag_count
+			args.llm, args.local_model, args.hf_model, model_to_use,
+			args.history_dir, args.rag_count, args.system_prompt
 		)
 
 	
-	# if args.query:
-	# 	# Single query mode
-	# 	# Echo the query
-	# 	print(f"{QUERY_COLOR}{args.query}{RESET_COLOR}\n")
-	# 	
-	# 	# Get RAG mode from project config
-	# 	rag_mode = rag_settings.get("rag_mode", "chunk")
-	# 	
-	# 	# In 'none' RAG mode, we skip the document search
-	# 	if rag_mode.lower() == "none":
-	# 		relevant_docs = []
-	# 		if args.debug:
-	# 			print_debug(f"Using RAG mode 'none' - skipping document search")
-	# 	else:
-	# 		print_system("Searching for relevant documents...")
-	# 		relevant_docs = search_documents(
-	# 			args.query, documents, args.project, 
-	# 			args.document_dir, embedding_config, 
-	# 			top_k=rag_count,
-	# 			debug=args.debug, provider_cache=provider_cache
-	# 		)
-	# 	
-	# 	# If we found relevant documents, confirm before querying
-	# 	if relevant_docs and not args.debug:
-	# 		proceed = input(f"{SYSTEM_COLOR}Proceed with query using these sources? (Y/n): {RESET_COLOR}").strip().lower()
-	# 		if proceed == 'n':
-	# 			print_system("Query canceled")
-	# 			sys.exit(0)
-	# 	
-	# 	# Determine the model name based on LLM type
-	# 	model_name = None
-	# 	if args.llm == LLM_LOCAL:
-	# 		model_name = args.local_model
-	# 	elif args.llm == LLM_HF:
-	# 		model_name = args.hf_model
-	# 	elif args.llm == LLM_CLAUDE:
-	# 		model_name = args.model  # Use the specified Claude model
-	# 	
-	# 	# Use the selected LLM
-	# 	if args.llm == LLM_CLAUDE:
-	# 		print_system(f"Generating answer with {args.llm} model: {model_name} (RAG mode: {rag_mode})...")
-	# 	else:
-	# 		print_system(f"Generating answer with {args.llm} {model_name} (RAG mode: {rag_mode})...")
-	# 	
-	# 	# Generate the response
-	# 	answer = get_response(
-	# 		args.query, relevant_docs, api_key, args.project,
-	# 		args.llm, model_name, args.debug, prompts_dir,
-	# 		rag_mode, args.document_dir  # Pass RAG mode and document_dir
-	# 	)
-	# 	
-	# 	# Print the answer with proper colors
-	# 	print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
-	# 	print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
-	# 
-	# else:
-	# 	# Interactive mode
-	# 	interactive_mode(
-	# 		documents, api_key, args.project, 
-	# 		args.document_dir, args.index_dir, 
-	# 		embedding_config, args.debug, prompts_dir,
-	# 		args.llm, args.local_model, args.hf_model, args.model,  # Pass Claude model here
-	# 		args.history_dir, args.rag_count
-	# 	)
+
 
 if __name__ == "__main__":
 	main()
