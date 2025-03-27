@@ -13,6 +13,17 @@ tqdm
 einops
 
 
+# optional for sqlite indexing
+sqlite3
+sqlite-vec
+
+# for API mode
+fastapi>=0.115.12
+uvicorn>=0.34
+jinja2>=3.1.6
+pydantic>=2.10.6
+
+
 
 # for PDF extraction (in development)
 

@@ -27,6 +27,9 @@ prompts/
 .env
 process_citations.py
 process_pdf.py
+install.sh
+diagnose.py
+debugging/
 
 # Logs and databases
 *.log
