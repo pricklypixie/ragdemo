@@ -27,15 +27,19 @@ A versatile Retrieval Augmented Generation (RAG) application that allows you to 
 1. Create a virtual environment:
 
 ```bash
-conda create -n rag python=3.11
-conda activate rag
+conda create -n ragdemo python=3.11
+conda activate ragdemo
 ```
 
 2. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/rag-query.git
-cd rag-query
+git clone https://github.com/pricklypixie/ragdemo.git
+
+# to test the development branch
+# git clone -b development https://github.com/pricklypixie/ragdemo.git
+
+cd ragdemo
 ```
 
 3. Install Python dependencies:
