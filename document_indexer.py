@@ -642,36 +642,84 @@ def get_accurate_chunk_count(files: List[str], max_chunk_size: int, debug: bool 
 
 
 def index_file(file_path: str, project_dir: str, document_dir: str, 
-				   project_indexes: Dict[str, List[Document]], 
-				   max_chunk_size: int, embedding_config: Optional[EmbeddingConfig] = None,
-				   debug: bool = False) -> None:
-		"""
-		Index a single file by creating paragraph-based chunks with overlap and generating embeddings.
-		Updates both the project-specific index and the master index.
-		"""
-		# Get the project for this file
-		project = get_project_path(file_path, document_dir)
-		
-		# Create the embedding provider
-		embedding_provider = get_embedding_provider(
-			project_dir=project, 
-			document_dir=document_dir, 
-			config=embedding_config,
-			debug=debug
-		)
-		
-		# Call the new function that takes a provider
-		index_file_with_provider(
-			file_path, 
-			project, 
-			document_dir, 
-			project_indexes, 
-			max_chunk_size, 
-			embedding_provider,
-			embedding_config,
-			debug
-		)
+				project_indexes: Dict[str, List[Document]], 
+				max_chunk_size: int, embedding_config: Optional[EmbeddingConfig] = None,
+				debug: bool = False) -> None:
+	"""
+	Index a single file by creating paragraph-based chunks with overlap and generating embeddings.
+	Updates both the project-specific index and the master index.
+	"""
+	# Check if file is a document format that needs conversion
+	file_ext = os.path.splitext(file_path)[1].lower()
+	if file_ext in ['.doc', '.docx', '.pdf']:
+		try:
+			# Try to convert the file to Markdown
+			from markitdown import MarkItDown
+			# output_path = os.path.splitext(file_path)[0] + ".md"
+			base_name = os.path.splitext(file_path)[0]
+			original_ext = os.path.splitext(file_path)[1].lower().replace(".", "")
+			output_path = f"{base_name}.{original_ext}.md"
 
+			
+			if debug:
+				print(f"[DEBUG] Converting {file_path} to {output_path}")
+			
+			# Initialize MarkItDown
+			md = MarkItDown(enable_plugins=False)
+			
+			# Convert the file using the new API
+			result = md.convert(file_path)
+			
+			if result and result.text_content:
+				# Write the text content to the output file
+				with open(output_path, 'w', encoding='utf-8') as f:
+					f.write(result.text_content)
+				
+				if debug:
+					print(f"[DEBUG] Successfully converted {file_path} to {output_path}")
+				# Use the converted file instead
+				file_path = output_path
+			else:
+				if debug:
+					print(f"[DEBUG] Failed to convert {file_path}, skipping - no content extracted")
+				return
+		except ImportError:
+			if debug:
+				print(f"[DEBUG] MarkItDown library not found. Cannot convert {file_path}")
+			return
+		except Exception as e:
+			if debug:
+				print(f"[DEBUG] Error converting {file_path}: {e}")
+			return
+	
+	# Get the project for this file
+	project = get_project_path(file_path, document_dir)
+	
+	# Create the embedding provider
+	embedding_provider = get_embedding_provider(
+		project_dir=project, 
+		document_dir=document_dir, 
+		config=embedding_config,
+		debug=debug
+	)
+	
+	# Call the function that takes a provider
+	index_file_with_provider(
+		file_path, 
+		project, 
+		document_dir, 
+		project_indexes, 
+		max_chunk_size, 
+		embedding_provider,
+		embedding_config,
+		debug
+	)	
+	
+	
+	
+	
+	
+	
 def index_project(project: str, document_dir: str, index_dir: str, 
 					  debug: bool = False, auto_adjust_chunks: bool = True,
 					  chars_per_dimension: int = 4, use_sqlite: bool = False) -> bool:
@@ -986,6 +1034,128 @@ def clear_index(project: str, index_dir: str, use_sqlite: bool = False, debug: b
 
 
 
+def convert_files(document_dir: str, project: str = None, debug: bool = False) -> int:
+	"""
+	Convert .doc, .docx, and .pdf files to .md format using MarkItDown.
+	
+	Args:
+		document_dir: Base document directory
+		project: Optional specific project to process (None for all projects)
+		debug: Whether to enable debug output
+		
+	Returns:
+		Number of files successfully converted
+	"""
+	try:
+		from markitdown import MarkItDown
+	except ImportError:
+		if debug:
+			print(f"[DEBUG] MarkItDown library not found. Please install with: pip install markitdown")
+		return 0
+	
+	# Initialize MarkItDown
+	md = MarkItDown(enable_plugins=False)
+	
+	converted_count = 0
+	
+	# Determine which directories to scan
+	if project is None or project == MASTER_PROJECT:
+		# Scan the main document directory and all project subdirectories
+		dirs_to_scan = [document_dir]
+		
+		# Add project subdirectories
+		try:
+			for item in os.listdir(document_dir):
+				dir_path = os.path.join(document_dir, item)
+				if os.path.isdir(dir_path):
+					dirs_to_scan.append(dir_path)
+		except Exception as e:
+			if debug:
+				print(f"[DEBUG] Error listing directories: {e}")
+	else:
+		# Scan only the specified project directory
+		project_dir = os.path.join(document_dir, project)
+		if os.path.isdir(project_dir):
+			dirs_to_scan = [project_dir]
+		else:
+			if debug:
+				print(f"[DEBUG] Project directory not found: {project_dir}")
+			return 0
+	
+	# Find all .doc, .docx, and .pdf files in the specified directories
+	files_to_convert = []
+	for dir_path in dirs_to_scan:
+		# Find .doc files
+		doc_files = glob.glob(os.path.join(dir_path, "**/*.doc"), recursive=True)
+		files_to_convert.extend([(f, "doc") for f in doc_files])
+		
+		# Find .docx files
+		docx_files = glob.glob(os.path.join(dir_path, "**/*.docx"), recursive=True)
+		files_to_convert.extend([(f, "docx") for f in docx_files])
+		
+		# Find .pdf files
+		pdf_files = glob.glob(os.path.join(dir_path, "**/*.pdf"), recursive=True)
+		files_to_convert.extend([(f, "pdf") for f in pdf_files])
+	
+	if debug:
+		print(f"[DEBUG] Found {len(files_to_convert)} files to convert")
+	
+	# Process each file using MarkItDown
+	for file_path, file_type in files_to_convert:
+		try:
+			# Determine output path (same name but with .md extension, preserving original suffix)
+			base_name = os.path.splitext(file_path)[0]
+			original_ext = os.path.splitext(file_path)[1].lower().replace(".", "")
+			output_path = f"{base_name}.{original_ext}.md"
+
+
+			
+			# Skip if the .md version already exists and is newer than the source file
+			if os.path.exists(output_path):
+				source_mtime = os.path.getmtime(file_path)
+				md_mtime = os.path.getmtime(output_path)
+				
+				if md_mtime >= source_mtime:
+					if debug:
+						print(f"[DEBUG] Skipping conversion of {file_path}, .md version is up to date")
+					converted_count += 1
+					continue
+			
+			# Use MarkItDown to convert the file
+			if debug:
+				print(f"[DEBUG] Converting {file_path} to {output_path}")
+			
+			# Use MarkItDown's convert function with the new API
+			result = md.convert(file_path)
+			
+			if result and result.text_content:
+				# Write the text content to the output file
+				with open(output_path, 'w', encoding='utf-8') as f:
+					f.write(result.text_content)
+				
+				converted_count += 1
+				if debug:
+					print(f"[DEBUG] Successfully converted {file_path}")
+			else:
+				if debug:
+					print(f"[DEBUG] Failed to convert {file_path} - no content extracted")
+		
+		except Exception as e:
+			if debug:
+				print(f"[DEBUG] Error converting {file_path}: {e}")
+				if hasattr(e, '__traceback__'):
+					import traceback
+					traceback.print_tb(e.__traceback__)
+	
+	if debug:
+		print(f"[DEBUG] Successfully converted {converted_count} files")
+	
+	return converted_count
+
+
+
+
+
 
 
 
@@ -1031,7 +1201,17 @@ def index_directory(document_dir: str, index_dir: str, max_chunk_size: int,
 	#
 	
 	
-	
+	# Convert .doc, .docx, and .pdf files to .md first
+	try:
+		num_converted = convert_files(document_dir, project, debug)
+		if num_converted > 0:
+			print(f"Converted {num_converted} office documents to Markdown format")
+	except Exception as e:
+		if debug:
+			print(f"[DEBUG] Error during document conversion: {e}")
+			print(traceback.format_exc())
+		print(f"Warning: Could not convert office documents (install markitdown with: pip install markitdown)")
+
 	
 	
 	
@@ -1591,7 +1771,7 @@ def main():
 	parser.add_argument("--debug", action="store_true",
 					help="Enable debug logging")
 	parser.add_argument("--file", type=str,
-					help="Index a single file instead of a directory")
+					help="Index a single file instead of a directory. Supports .txt, .md, .doc, .docx, and .pdf formats.")
 	parser.add_argument("--project", type=str,
 					help="Index a specific project (subdirectory) only")
 	parser.add_argument("--list-projects", action="store_true", 
@@ -1695,14 +1875,59 @@ def main():
 	# Track files where indexing was aborted due to MAX_CHUNKS limit
 	aborted_files = set()
 	
-			
-			
+	# The main() function, update the part that handles --file argument:
 	if args.file:
-		# Index a single file
+		# Single file mode
+		file_path = args.file
+		file_ext = os.path.splitext(file_path)[1].lower()
+		
+		# If the file is a document format that needs conversion
+		if file_ext in ['.doc', '.docx', '.pdf']:
+			try:
+				# Try to convert the file
+				from markitdown import MarkItDown
+				
+				# Determine output path (preserving original suffix)
+				base_name = os.path.splitext(file_path)[0]
+				original_ext = os.path.splitext(file_path)[1].lower().replace(".", "")
+				output_path = f"{base_name}.{original_ext}.md"
+				
+				print(f"Converting {file_path} to {output_path}")
+				
+				# Initialize MarkItDown
+				md = MarkItDown(enable_plugins=False)
+				
+				# Convert the file using the new API
+				result = md.convert(file_path)
+				
+				if result and result.text_content:
+					# Write the text content to the output file
+					with open(output_path, 'w', encoding='utf-8') as f:
+						f.write(result.text_content)
+					
+					print(f"Successfully converted {file_path} to {output_path}")
+					# Use the converted file instead - explicitly update args.file
+					args.file = output_path
+					file_path = output_path
+				else:
+					print(f"Failed to convert {file_path}, cannot index - no content extracted")
+					return
+			except ImportError:
+				print(f"MarkItDown library not found. Please install with: pip install markitdown")
+				return
+			except Exception as e:
+				print(f"Error converting {file_path}: {e}")
+				if args.debug:
+					print(traceback.format_exc())
+				return
+	
+		# Check if the file exists after potential conversion
 		if not os.path.exists(args.file):
 			print(f"Error: File not found: {args.file}")
 			return
 		
+		# Index the file (either original or converted) - rest of this code remains the same		
+			
 		print(f"Indexing single file: {args.file}")
 		
 		# Get the project for this file

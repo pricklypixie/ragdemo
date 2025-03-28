@@ -385,7 +385,7 @@ python rag_query.py --use-sqlite
 
 There is still some development to do:
 
-- Adding project management to the web interdace (e.g., to add documents)
+- Adding project management to the web interface (e.g., to add documents)
 
 ## License
 
