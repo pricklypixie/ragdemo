@@ -1,30 +1,33 @@
-# RAG CLI Application with Claude
+# RAG Query Application
 
-A robust command-line Retrieval Augmented Generation (RAG) application that uses Claude and sentence transformers. This application indexes documents with a paragraph-based chunking approach and allows answering questions based on your document collection.
+A versatile Retrieval Augmented Generation (RAG) application that allows you to query your document collection using various Large Language Models (LLMs). This application indexes documents locally, creates embeddings, and uses those to perform semantic search before passing relevant context to an LLM to answer your questions.
 
 ## Features
 
+- **Multiple LLM Support**: Use Claude API, OpenAI API, or local models via MLX or Hugging Face
+- **Efficient Document Storage**: Choose between pickle files (simple) or SQLite with vector search (scalable)
 - **Paragraph-Based Chunking**: Creates natural document chunks while maintaining context
-- **Project Support**: Organize documents in subdirectories as separate projects
-- **Local Embeddings**: Uses sentence-transformers for generating embeddings locally
-- **Claude Integration**: Leverages Claude's powerful AI to answer questions
-- **Interactive Mode**: Switch between projects and ask multiple questions in a session
+- **Project Organization**: Organize documents in subdirectories as separate projects
+- **Local Embeddings**: Generate embeddings locally using sentence-transformers
+- **Multiple Interfaces**: Command-line, interactive terminal, or web-based interface
+- **RAG Modes**: Choose between chunk-based, file-based, or no RAG
+- **Configurable System Prompts**: Customize the LLM's behavior with system prompts
 
 ## Requirements
 
-- Python 3.11.5
-- Anthropic API key (optional)
-- OpenAI API key (optional)
-- Huggingface API key (optional)
+- Python 3.10+ (tested with 3.11.5)
+- Apple Silicon Mac for local model support
+- API keys (optional):
+  - Anthropic API key (for Claude models)
+  - OpenAI API key (for GPT models)
 - Documents in TXT or MD format
 
 ## Installation
 
-
-1. Create virtual environment
+1. Create a virtual environment:
 
 ```bash
-conda create -n ragdemo
+conda create -n ragdemo python=3.11
 conda activate ragdemo
 ```
 
@@ -32,64 +35,64 @@ conda activate ragdemo
 
 ```bash
 git clone https://github.com/pricklypixie/ragdemo.git
-# for development branch
+
+# to test the development branch
 # git clone -b development https://github.com/pricklypixie/ragdemo.git
+
 cd ragdemo
 ```
 
-
-3. Install dependencies:
+3. Install Python dependencies:
 
 ```bash
-conda install python==3.11.5
 pip install -r requirements.txt
 ```
 
-4. Set up your Anthropic API key as an environment variable:
+4. (optional) For better performance with large document collections, install SQLite with vector search extension:
 
 ```bash
-# On Linux/macOS
+# macOS (with Homebrew)
+brew install sqlite-vss
+
+# Or install the Python package
+pip install sqlite-vec
+```
+
+5. (optional) Set up API keys:
+
+```bash
+# For Claude API
 export ANTHROPIC_API_KEY="your-api-key"
 
-# On Windows
-set ANTHROPIC_API_KEY=your-api-key
+# For OpenAI API
+export OPENAI_API_KEY="your-api-key"
 ```
 
-5. For using OpenAI embeddings or other Sentence Transformer embeddings, set the appropriate keys:
+6. For local models support, install Simon Willison's LLM library:
 
-```bash
-export HF_TOKEN=your-huggingface-token
-export OPENAI_API_KEY=your-openai-key
+This should happen as part of the install using requirements.txt.
 
+Check it is working with the following:
 
-6. To use on device models
-
-```bash
-# Then install a model (e.g., GPT4All)
-llm install gpt4all
-
-# Option 2: Install transformers
-pip install transformers torch
+```bash 
+llm -m Llama-3 "hello. who are you?"
 ```
 
-### To work on development branch
+The model will download and you should see a reply.
+
+If this doesn't work:
 
 ```bash
-conda create -n ragdemo
-conda activate ragdemo
+pip install llm llm-gpt4all
+```
 
-git clone -b development https://github.com/pricklypixie/ragdemo.git
-cd ragdemo
+## Quick Start
 
-# when some new development changes are made
-git pull
+### 1. Add your documents
 
-
-## Usage
-
-### Setting Up Your Documents
-
-Place your documents in the `documents` directory:
+Place documents in the `documents` directory:
+- Files directly in the `documents` folder belong to the "master" project
+- Subdirectories form separate projects (e.g., `documents/project1/file.txt`)
 
 ```
 documents/
@@ -99,234 +102,291 @@ documents/
 │   ├── doc1.txt
 │   └── doc2.md
 └── project2/
-	├── doc3.txt
-	└── doc4.md
+    ├── doc3.txt
+    └── doc4.md
 ```
 
-- Files in the root directory belong only to the "master" project
-- Files in subdirectories belong to their respective project and the master project
+The application works with text documents only that use .txt or .md as a suffix. If you have documents in other formats, you will need to extract the text and save it as a .txt or .md file.
 
-### Indexing Documents
+For more than casual experimentation, best to use project folders and keep the root ("master") documents folder just for projects.
 
-Index all documents:
-
-```bash
-python document_indexer.py
-```
-
-Index with debugging information:
-
-```bash
-python document_indexer.py --debug
-```
-
-Index a specific project:
-
-```bash
-python document_indexer.py --project project1
-```
-
-Index a single file:
-
-```bash
-python document_indexer.py --file documents/file1.txt
-```
-
-List available projects:
-
-```bash
-python document_indexer.py --list-projects
-```
-
-### Querying the Index
-
-Interactive mode:
+### 2. Launch the interactive terminal
 
 ```bash
 python rag_query.py
 ```
 
-Query a specific project:
+### 3. Index and query your documents
+
+Basic workflow in interactive mode:
+```
+# List available projects
+projects
+
+# Switch to a project
+project project1
+
+# Index the current project
+index
+
+# Ask a question
+What information is contained in these documents?
+```
+
+The question won't actually work that well, better to ask something directly related to the content of your documents.
+
+### 4. Get help anytime
+
+```
+help
+```
+
+## Interfaces
+
+### Command Line (Single Query)
 
 ```bash
+# Basic query using default settings
+python rag_query.py --query "What information is in my documents?"
+
+# Query a specific project using Claude
+python rag_query.py --project project1 --llm claude --query "Summarize this content"
+
+# Query with OpenAI
+python rag_query.py --llm openai --model gpt-4o-mini --query "Analyze these documents"
+
+# Query with a local model
+python rag_query.py --llm local --model orca-2-13b --query "Explain the key concepts"
+```
+
+As above, best to test with queries related to the documents, rather than general ones.
+
+### Interactive Terminal
+
+```bash
+# Start interactive mode
+python rag_query.py
+
+# With debug information
+python rag_query.py --debug
+
+# Starting with a specific project
 python rag_query.py --project project1
 ```
 
-Single query mode:
+### Web Interface
 
 ```bash
-python rag_query.py --query "What information is in my documents?"
+# Start the web server
+python api_server.py
+
+# With custom host and port
+python api_server.py --host 0.0.0.0 --port 8080
 ```
 
-Debug mode:
+Then open your browser to http://localhost:8000/ (or your custom host/port)
+
+## Document Indexing
+
+The indexer can be used as a standalone tool:
 
 ```bash
-python rag_query.py --debug
+# Index all documents
+python document_indexer.py
+
+# Index a specific project
+python document_indexer.py --project project1
+
+# Index with SQLite storage
+python document_indexer.py --use-sqlite
+
+# Index a single file
+python document_indexer.py --file documents/file1.txt
+
+# List available projects
+python document_indexer.py --list-projects
 ```
 
-### Interactive Commands
+## Interactive Mode Commands
 
-When in interactive mode, you can use these commands:
+Interactive mode is launched with:
 
+```bash
+python rag_query.py
+``` in
+
+In interactive mode, you can use these commands:
+
+### Project Management
 - `projects` - List all available projects
 - `project <name>` - Switch to a different project
-- `exit` or `quit` - Exit the application
+- `config` - Show current project configuration
+- `index` - Index the current project
+- `index clear` - Clear the current project's index
 
-To manage the LLM used to answer the queries:
-- `models` - List all available LLMs
-- `llm claude` - Use Claude API using local api key
-- `llm local [model_name]` - Use a local model with llm library
+### LLM Selection
+- `models` - List all available LLM models
+- `llm claude [model_name]` - Use Claude API
+- `llm openai [model_name]` - Use OpenAI API
+- `llm local [model_name]` - Use a local model
 - `llm hf [model_name]` - Use a Hugging Face model
 
+### RAG Settings
+- `rag mode <mode>` - Set RAG mode (chunk, file, none)
+- `rag count <number>` - Set number of documents to retrieve
+
+### System Prompts
+- `system prompt "prompt"` - Set the system prompt
+- `system prompt show` - Show the current system prompt
+- `system prompt clear` - Clear the system prompt
+
+### Defaults
+- `defaults save` - Save current settings as defaults
+- `defaults read` - Load default settings
+
+### Other
+- `history` - Show command history
+- `history clear` - Clear command history
+- `history save` - Save history to a file
+- `exit` or `quit` - Exit the application
+
+### SQLite Utilities
+- `sqlite verify` - Check if SQLite vector extension is properly installed
+- `sqlite inspect` - Show details about the current SQLite database
+
+
+In interactive mode, `help` will list the available commands.
 
 ## Configuration
 
-You can customize these parameters:
+### Project Configuration
 
-- `--index-dir`: Directory to store the index (default: `document_index`)
-- `--document-dir`: Directory containing documents (default: `documents`)
-- `--embedding-model`: SentenceTransformer model (default: `all-MiniLM-L6-v2`)
-- `--max-chunk-size`: Maximum chunk size in characters (default: 1500)
-
-## Project-Specific Embedding Configuration
-
-Each project can have its own embedding configuration by adding an `embedding_config.json` file to the project directory:
+Each project can have its own configuration in a `project_config.json` file. This is a sample.
 
 ```json
 {
-  "embedding_type": "sentence_transformers",
-  "model_name": "all-MiniLM-L6-v2",
-  "api_key": null,
-  "additional_params": {}
+  "indexing": {
+    "embedding_type": "sentence_transformers",
+    "model_name": "all-MiniLM-L6-v2",
+    "api_key": null,
+    "additional_params": {}
+  },
+  "rag": {
+    "llm_type": "local",
+    "llm_model": "mlx-community/Ministral-8B-Instruct-2410-bf16",
+    "rag_mode": "chunk",
+    "rag_count": 2,
+    "system_prompt": "You are a helpful assistant."
+  },
+  "defaults": {
+    "llm_type": "local",
+    "llm_model": "mlx-community/Ministral-8B-Instruct-2410-bf16",
+    "rag_mode": "chunk",
+    "rag_count": 2,
+    "system_prompt": "You are a helpful assistant."
+  },
+  "system": {
+    "orca-2-13b": {
+      "system_prompt": "You are a helpful assistant that provides detailed information."
+    },
+    "claude-3-5-haiku-20241022": {
+      "system_prompt": "You are a concise, accurate assistant."
+    }
+  }
 }
+```
 
-### Supported Embedding Types
+You can edit this manually, however all settings except for the embedding_type can be managed in interactive mode.
+
+### Supported Embedding Models
 
 1. **sentence_transformers** (default)
    - Local embedding generation using sentence-transformers
-   - Recommended models: "all-MiniLM-L6-v2", "all-mpnet-base-v2"
+   - Recommended models: 
+     - "all-MiniLM-L6-v2" (384 dimensions, faster)
+     - "all-mpnet-base-v2" (768 dimensions, more accurate)
    - No API key required
 
 2. **openai**
    - OpenAI's embedding API
-   - Recommended models: "text-embedding-3-small", "text-embedding-3-large"
-   - Requires OpenAI API key (set via OPENAI_API_KEY environment variable)
-   
-For experimentation, there we see no benefit from running remote embedding models, unless there is a particular need for much larger embedding sizes.
+   - Models: "text-embedding-3-small", "text-embedding-3-large"
+   - Requires OpenAI API key
 
-### Example Configurations
+### Supported LLM Models
 
-#### For multilingual documents:
-```json
-// A HuggingFace User Access Tokens may be required to download
-// some sentence_transformers models
-// https://huggingface.co/sentence-transformers
-// 
-{
-  "embedding_type": "sentence_transformers",
-  "model_name": "paraphrase-multilingual-mpnet-base-v2"
-}
+1. **Claude API** (`--llm claude`)
+   - Models: "claude-3-5-haiku-20241022", "claude-3-sonnet-20240229", "claude-3-opus-20240229"
+   - Requires Anthropic API key
+
+2. **OpenAI API** (`--llm openai`)
+   - Models: "gpt-4o-mini", "gpt-4o", "gpt-4", "gpt-3.5-turbo"
+   - Requires OpenAI API key
+
+3. **Local Models** (`--llm local`)
+   - Requires Simon Willison's llm library
+   - Install models with: `llm install <model_name>` (in the same python environment use use to launch rag_query.py)
+   - Popular models:
+     - "mlx-community/Ministral-8B-Instruct-2410-bf16"
+     - "orca-2-13b"
+     - "DeepSeek-R1-Distill-Qwen-14B-Q4_0"
+
+4. **Hugging Face Models** (`--llm hf`)
+   - Direct integration with Hugging Face models
+   - Examples: "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "mistralai/Mistral-7B-v0.1"
+
+## RAG Modes
+
+- **chunk** (default): Retrieves the most relevant document chunks
+- **file**: Retrieves entire files containing the most relevant chunks
+- **none**: Doesn't provide document context (uses LLM's knowledge only)
+
+## SQLite Vector Storage
+
+For large document collections, SQLite with vector search is recommended:
+
+```bash
+# Index using SQLite storage
+python document_indexer.py --use-sqlite
+
+# Query using SQLite storage
+python rag_query.py --use-sqlite
 ```
-
-#### For OpenAI embeddings:
-```json
-{
-  "embedding_type": "openai",
-  "model_name": "text-embedding-3-small"
-}
-```
-
-Note: Combining documents with different embedding models in the same index is supported. The system will handle the differences during search (untested).
-
-## Mac-Specific Notes
-
-This application has been optimized for macOS, including Apple Silicon Macs. It uses CPU for embeddings to avoid Metal compatibility issues.
 
 ## How It Works
 
 1. **Document Indexing**:
    - Documents are split into paragraphs
-   - Paragraphs are grouped into chunks with overlap between chunks
-   - Each chunk is embedded using sentence-transformers
-   - Embeddings and chunks are stored in separate project indexes
+   - Paragraphs are grouped into chunks with overlap
+   - Each chunk is embedded using the configured model
+   - Embeddings and chunks are stored in pickle files or SQLite database
 
 2. **Query Processing**:
    - User query is embedded using the same model
    - Semantic search finds relevant document chunks
-   - Claude is prompted with the query and relevant chunks
-   - Claude provides an answer based on the provided context
-   
-### Creating a New Project:
-   
-```bash
-python rag_query.py --project new_project --index
-```
-
-This will:
-1. Create the project directory if it doesn't exist
-2. Create a default embedding configuration if none exists
-3. Index all files in the project directory
-4. Save the index for future queries
-
-### Querying with Detailed Document Information:
-
-```bash
-python rag_query.py --project sample --query "What is the main topic?" --debug
-```
-
-## Experimenting with different local models
-
-Easiest to experiment with the LLM.
-
-For example, to use the excellent OLMo 2 model from the Allen institute (https://allenai.org/blog/olmo2-32B):
-
-```bash
-llm install llm-mlx
-llm mlx download-model mlx-community/OLMo-2-0325-32B-Instruct-4bit
-```
-
-And then within the application:
-
-llm local mlx-community/OLMo-2-0325-32B-Instruct-4bit
-
+   - Relevant context is sent to the selected LLM
+   - LLM provides an answer based on the provided context
 
 ## Troubleshooting
 
-- **Installation Issues**: Make sure you have the right Python version and all dependencies installed
-- **API Key Issues**: Verify your Anthropic API key is set correctly
-- **Memory Issues**: For large document collections, consider indexing projects separately
+- **Memory Issues**: For large document collections, use SQLite storage (`--use-sqlite`)
+- **Local Model Performance**: Local models work best on Apple Silicon Macs with sufficient RAM
+- **API Key Issues**: Check your environment variables are set correctly
+- **Installation Problems**: Make sure all dependencies are installed
 
-## Next Steps
+## Tips and Tricks
 
-   - Create way to access the relevant source documents
-   
-## Issues
+- Use `--debug` flag to see detailed information about what's happening
+- Adjust `rag count` to control how many documents are retrieved
+- Try different embedding models for different types of content
+- Use system prompts to control the style and tone of responses
+- For large projects, SQLite storage is more efficient than pickle files
 
-   - Search can return the same document three times (if three chunks from the same document have the highest scores). Should be changed to return the three highest scoring documents.
+## Next steps
+
+There is still some development to do:
+
+- Adding project management to the web interface (e.g., to add documents)
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-
-MIT License
-
-Copyright (c) 2023 Prickly Pixie Project
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.

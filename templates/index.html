@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>RAG Query Interface</title>
+	<style>
+		body {
+			font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+			line-height: 1.6;
+			color: #333;
+			max-width: 1200px;
+			margin: 0 auto;
+			padding: 20px;
+			background-color: #f9f9f9;
+		}
+		header {
+			background-color: #2c3e50;
+			color: white;
+			padding: 10px 20px;
+			border-radius: 5px;
+			margin-bottom: 20px;
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+		}
+		h1 {
+			margin: 0;
+			font-size: 24px;
+		}
+		.container {
+			background-color: white;
+			border-radius: 5px;
+			box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+			padding: 20px;
+			margin-bottom: 20px;
+		}
+		.form-group {
+			margin-bottom: 15px;
+		}
+		label {
+			display: block;
+			margin-bottom: 5px;
+			font-weight: bold;
+		}
+		select, textarea {
+			width: 100%;
+			padding: 10px;
+			border: 1px solid #ddd;
+			border-radius: 4px;
+			box-sizing: border-box;
+			font-family: inherit;
+			font-size: 16px;
+		}
+		textarea {
+			min-height: 100px;
+			resize: vertical;
+		}
+		button {
+			background-color: #3498db;
+			color: white;
+			border: none;
+			padding: 10px 15px;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 16px;
+			transition: background-color 0.3s;
+		}
+		button:hover {
+			background-color: #2980b9;
+		}
+		.button-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+		}
+		#index-button {
+			background-color: #27ae60;
+			margin-left: 10px;
+		}
+		#index-button:hover {
+			background-color: #219653;
+		}
+		.settings-toggle {
+			background-color: #7f8c8d;
+			margin-left: auto;
+			margin-right: 10px;
+		}
+		.settings-toggle:hover {
+			background-color: #6c7a7d;
+		}
+		.advanced-settings {
+			display: none;
+			background-color: #f5f5f5;
+			border: 1px solid #ddd;
+			border-radius: 4px;
+			padding: 15px;
+			margin-bottom: 15px;
+		}
+		.response {
+			margin-top: 30px;
+		}
+		.sources {
+			background-color: #f8f9fa;
+			border-left: 3px solid #3498db;
+			padding: 10px 15px;
+			margin-bottom: 20px;
+			font-size: 14px;
+		}
+		.source-item {
+			margin-bottom: 10px;
+			padding-bottom: 10px;
+			border-bottom: 1px solid #eee;
+		}
+		.source-item:last-child {
+			border-bottom: none;
+			margin-bottom: 0;
+			padding-bottom: 0;
+		}
+		.answer {
+			padding: 20px;
+			background-color: #e8f4fc;
+			border-radius: 5px;
+			margin-bottom: 20px;
+			line-height: 1.7;
+		}
+		.loading {
+			display: none;
+			text-align: center;
+			padding: 20px;
+			font-style: italic;
+			color: #666;
+		}
+		.loading:after {
+			content: "";
+			animation: dots 1.5s infinite;
+		}
+		@keyframes dots {
+			0%, 20% { content: "."; }
+			40% { content: ".."; }
+			60%, 100% { content: "..."; }
+		}
+		.source-header {
+			font-weight: bold;
+			margin-bottom: 5px;
+			display: flex;
+			justify-content: space-between;
+		}
+		.source-content {
+			margin-left: 10px;
+			border-left: 2px solid #ddd;
+			padding-left: 10px;
+			white-space: pre-line;
+			overflow-wrap: break-word;
+			max-height: 100px;
+			overflow-y: auto;
+		}
+		.expand-button {
+			background-color: #eee;
+			border: none;
+			padding: 2px 5px;
+			font-size: 12px;
+			cursor: pointer;
+			border-radius: 3px;
+		}
+		.expanded .source-content {
+			max-height: none;
+		}
+		.similarity-score {
+			display: inline-block;
+			padding: 2px 5px;
+			background-color: #e8f4fc;
+			border-radius: 3px;
+			font-size: 12px;
+			margin-left: 10px;
+		}
+		.info-bar {
+			margin-top: 20px;
+			font-size: 14px;
+			color: #666;
+		}
+		.project-info {
+			display: flex;
+			align-items: center;
+		}
+		.project-badge {
+			background-color: #3498db;
+			color: white;
+			padding: 5px 10px;
+			border-radius: 3px;
+			font-size: 12px;
+			margin-left: 10px;
+		}
+		a {
+			color: #3498db;
+			text-decoration: none;
+		}
+		a:hover {
+			text-decoration: underline;
+		}
+		.answer img {
+			max-width: 100%;
+			height: auto;
+			margin: 10px 0;
+			border-radius: 5px;
+		}
+		pre {
+			background-color: #f8f9fa;
+			padding: 10px;
+			border-radius: 4px;
+			overflow-x: auto;
+			font-family: 'Courier New', Courier, monospace;
+		}
+		code {
+			background-color: #f0f0f0;
+			padding: 2px 4px;
+			border-radius: 3px;
+			font-family: 'Courier New', Courier, monospace;
+		}
+		.answer table {
+			border-collapse: collapse;
+			width: 100%;
+			margin: 10px 0;
+		}
+		.answer th, .answer td {
+			border: 1px solid #ddd;
+			padding: 8px;
+			text-align: left;
+		}
+		.answer th {
+			background-color: #f2f2f2;
+		}
+		.answer tr:nth-child(even) {
+			background-color: #f9f9f9;
+		}
+		.doc-link {
+			display: inline-flex;
+			align-items: center;
+			margin-left: 5px;
+			color: #3498db;
+			transition: color 0.2s;
+		}
+		.doc-link:hover {
+			color: #2980b9;
+		}
+	</style>
+</head>
+<body>
+	<header>
+		<h1>RAG Query Interface</h1>
+		<div class="project-info">
+			<span>Project:</span>
+			<span class="project-badge" id="current-project">{{ projects[0] if projects else "master" }}</span>
+		</div>
+	</header>
+	
+	<div class="container">
+		<form id="query-form">
+			<div class="form-group">
+				<label for="project-select">Select Project:</label>
+				<select id="project-select" name="project">
+					{% for project in projects %}
+					<option value="{{ project }}">{{ project }}</option>
+					{% endfor %}
+				</select>
+			</div>
+			
+			<button type="button" class="settings-toggle" id="settings-toggle">Advanced Settings</button>
+			
+			<div class="advanced-settings" id="advanced-settings">
+				<div class="form-group">
+					<label for="llm-type">LLM Type:</label>
+					<select id="llm-type" name="llm_type">
+						<option value="">Use Project Default</option>
+						<option value="claude">Claude</option>
+						<option value="openai">OpenAI</option>
+						<option value="local">Local</option>
+						<option value="hf">Hugging Face</option>
+					</select>
+				</div>
+				
+				<div class="form-group">
+					<label for="model-name">Model Name:</label>
+					<select id="model-name" name="model_name">
+						<option value="">Use Project Default</option>
+						<optgroup label="Claude Models">
+							<option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
+							<option value="claude-3-sonnet-20240229">claude-3-sonnet-20240229</option>
+							<option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
+						</optgroup>
+						<optgroup label="OpenAI Models">
+							<option value="gpt-4o-mini">gpt-4o-mini</option>
+							<option value="gpt-4o">gpt-4o</option>
+							<option value="gpt-4">gpt-4</option>
+							<option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+						</optgroup>
+						<optgroup label="Local Models">
+							<option value="Llama-3">Llama-3 (requires llm-gpt4all)</option>
+							<option value="mistral-7b-instruct-v0">mistral-7b-instruct-v0 (requires llm-gpt4all)</option>
+							<option value="orca-2-7b">orca-2-7b">orca-2-7b">orca-2-7b (requires llm-gpt4all)</option>
+							<option value="orca-2-13b">orca-2-13b">orca-2-13b">orca-2-13b (requires llm-gpt4all)</option>
+							<option value="DeepSeek-R1-Distill-Qwen-14B-Q4_0">DeepSeek-R1-Distill-Qwen-14B-Q4_0 (requires llm-gpt4all)</option>
+							<option value="mlx-community/OLMo-2-0325-32B-Instruct-4bit">OLMo-2-0325-32B-Instruct-4bit (requires llm-mlx)</option>
+						</optgroup>
+						<optgroup label="Hugging Face Models">
+							<option value="TinyLlama/TinyLlama-1.1B-Chat-v1.0">TinyLlama (1.1B)</option>
+							<option value="mistralai/Mistral-7B-v0.1">Mistral (7B)</option>
+						</optgroup>
+					</select>
+				</div>
+				
+				<div class="form-group">
+					<label for="rag-mode">RAG Mode:</label>
+					<select id="rag-mode" name="rag_mode">
+						<option value="">Use Project Default</option>
+						<option value="chunk">Chunk</option>
+						<option value="file">File</option>
+						<option value="none">None</option>
+					</select>
+				</div>
+				
+				<div class="form-group">
+					<label for="rag-count">Document Count:</label>
+					<select id="rag-count" name="rag_count">
+						<option value="">Use Project Default</option>
+						<option value="1">1</option>
+						<option value="2">2</option>
+						<option value="3">3</option>
+						<option value="5">5</option>
+						<option value="10">10</option>
+					</select>
+				</div>
+				
+				<div class="form-group">
+					<label for="system-prompt">System Prompt:</label>
+					<textarea id="system-prompt" name="system_prompt" placeholder="Leave empty to use project default"></textarea>
+				</div>
+			</div>
+			
+			<div class="form-group">
+				<label for="query-input">Your Question:</label>
+				<textarea id="query-input" name="query" placeholder="Enter your question here..."></textarea>
+			</div>
+			
+			<div class="button-row">
+				<button type="submit" id="submit-button">Send Query</button>
+				<button type="button" id="index-button">Re-Index Project</button>
+			</div>
+		</form>
+	</div>
+	
+	<div class="loading" id="loading">Processing your query</div>
+	
+	<div class="response" id="response">
+		<!-- Response will be inserted here -->
+	</div>
+
+	<script>
+		document.addEventListener('DOMContentLoaded', function() {
+			const queryForm = document.getElementById('query-form');
+			const projectSelect = document.getElementById('project-select');
+			const settingsToggle = document.getElementById('settings-toggle');
+			const advancedSettings = document.getElementById('advanced-settings');
+			const indexButton = document.getElementById('index-button');
+			const loading = document.getElementById('loading');
+			const response = document.getElementById('response');
+			const currentProjectBadge = document.getElementById('current-project');
+			
+			// Update current project badge when project is selected
+			projectSelect.addEventListener('change', function() {
+				currentProjectBadge.textContent = this.value;
+			});
+			
+			// Toggle advanced settings
+			settingsToggle.addEventListener('click', function() {
+				if (advancedSettings.style.display === 'block') {
+					advancedSettings.style.display = 'none';
+					settingsToggle.textContent = 'Advanced Settings';
+				} else {
+					advancedSettings.style.display = 'block';
+					settingsToggle.textContent = 'Hide Advanced Settings';
+				}
+			});
+			
+			// Handle form submission with streaming
+// Handle form submission with streaming
+			queryForm.addEventListener('submit', async function(e) {
+				e.preventDefault();
+				
+				const formData = new FormData(queryForm);
+				const query = formData.get('query').trim();
+				
+				if (!query) {
+					alert('Please enter a query');
+					return;
+				}
+				
+				// Prepare request data
+				const requestData = {
+					query: query,
+					project: formData.get('project')
+				};
+				
+				// Add optional parameters if set
+				if (formData.get('llm_type')) requestData.llm_type = formData.get('llm_type');
+				if (formData.get('model_name')) requestData.model_name = formData.get('model_name');
+				if (formData.get('rag_mode')) requestData.rag_mode = formData.get('rag_mode');
+				if (formData.get('rag_count')) requestData.rag_count = parseInt(formData.get('rag_count'));
+				if (formData.get('system_prompt')) requestData.system_prompt = formData.get('system_prompt');
+				
+				// Show loading indicator
+				loading.style.display = 'block';
+				loading.textContent = 'Searching for relevant documents...';
+				response.innerHTML = '';
+				
+				try {
+					// Set up the response structure in advance
+					response.innerHTML = `
+						<div id="documents-section" style="display:none;">
+							<h2>Sources</h2>
+							<div class="sources" id="sources-container"></div>
+						</div>
+						<div id="answer-section" style="display:none;">
+							<h2>Answer</h2>
+							<div class="answer" id="answer-container"></div>
+						</div>
+						<div class="info-bar" id="info-bar" style="display:none;"></div>
+					`;
+					
+					const sourcesContainer = document.getElementById('sources-container');
+					const documentsSection = document.getElementById('documents-section');
+					const answerContainer = document.getElementById('answer-container');
+					const answerSection = document.getElementById('answer-section');
+					const infoBar = document.getElementById('info-bar');
+					
+					// Make the streaming request - rename the response variable to apiResponse to avoid conflict
+					const apiResponse = await fetch('/stream_query', {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json'
+						},
+						body: JSON.stringify(requestData)
+					});
+					
+					if (!apiResponse.ok) {
+						const errorText = await apiResponse.text();
+						console.error('API error response:', errorText);
+						throw new Error(`Server error: ${apiResponse.status} - ${errorText}`);
+					}
+					
+					// Set up the reader for the stream
+					const reader = apiResponse.body.getReader();
+					const decoder = new TextDecoder();
+					let buffer = '';
+					
+					while (true) {
+						const { done, value } = await reader.read();
+						
+						if (done) {
+							console.log('Stream complete');
+							break;
+						}
+						
+						// Decode the received chunk and add to buffer
+						const text = decoder.decode(value, { stream: true });
+						console.log('Received chunk:', text);
+						buffer += text;
+						
+						// Process complete lines in the buffer
+						let lines = buffer.split('\n');
+						buffer = lines.pop() || ''; // Keep the last incomplete line in the buffer
+						
+						for (const line of lines) {
+							if (line.trim() === '') continue;
+							
+							try {
+								console.log('Processing line:', line);
+								const event = JSON.parse(line);
+								console.log('Parsed event:', event);
+								
+								switch (event.event) {
+									case 'search_started':
+										loading.textContent = 'Searching for relevant documents...';
+										break;
+										
+									case 'documents':
+										// Display the documents
+										loading.textContent = 'Documents found. Generating answer...';
+										documentsSection.style.display = 'block';
+										
+										if (event.data && event.data.length > 0) {
+											let documentHTML = '';
+											
+											event.data.forEach((doc, index) => {
+												const similarity = doc.similarity ? Math.round(doc.similarity * 100) : 0;
+												const filePath = doc.metadata.file_path || 'Unknown';
+												const fileName = filePath.split('/').pop();
+												const projectName = doc.metadata.project || requestData.project;
+												
+												// Create document link
+												const docLink = `/document/${encodeURIComponent(projectName)}/${encodeURIComponent(filePath)}`;
+												
+												documentHTML += `
+													<div class="source-item" id="source-${index}">
+														<div class="source-header">
+															<div>
+																<strong>Source ${index + 1}:</strong> ${fileName}
+																<a href="${docLink}" target="_blank" class="doc-link" title="Open document in new tab">
+																	<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+																		<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+																		<polyline points="15 3 21 3 21 9"></polyline>
+																		<line x1="10" y1="14" x2="21" y2="3"></line>
+																	</svg>
+																</a>
+																<span class="similarity-score">${similarity}% match</span>
+															</div>
+															<button class="expand-button" onclick="toggleSource('source-${index}')">Expand</button>
+														</div>
+														<div class="source-content">${doc.content}</div>
+													</div>
+												`;
+											});
+											
+											sourcesContainer.innerHTML = documentHTML;
+										} else {
+											sourcesContainer.innerHTML = '<p>No relevant documents found.</p>';
+										}
+										break;
+										
+									case 'llm_started':
+										loading.textContent = 'Generating answer...';
+										break;
+										
+									case 'answer':
+										// Display the answer and metadata
+										answerSection.style.display = 'block';
+										answerContainer.innerHTML = marked.parse(event.data.answer);
+										
+										// Show the info bar with metadata
+										infoBar.style.display = 'block';
+										infoBar.innerHTML = `
+											<div>Answered by: ${event.data.llm_type}/${event.data.model_name}</div>
+											<div>Response time: ${event.data.elapsed_time.toFixed(2)} seconds</div>
+										`;
+										break;
+										
+									case 'error':
+										throw new Error(event.message);
+										
+									case 'complete':
+										loading.style.display = 'none';
+										break;
+								}
+							} catch (err) {
+								console.error('Error processing event:', err, 'Event data:', line);
+							}
+						}
+					}
+					
+				} catch (error) {
+					console.error('Error in form submission:', error);
+					response.innerHTML = `<div class="container" style="background-color: #ffeeee; border-left: 3px solid #e74c3c;">
+						<h3 style="color: #e74c3c;">Error</h3>
+						<p>${error.message}</p>
+					</div>`;
+					
+					loading.style.display = 'none';
+				}
+			});
+			
+			// Handle index button
+			indexButton.addEventListener('click', async function() {
+				const project = projectSelect.value;
+				
+				if (confirm(`Are you sure you want to re-index project "${project}"? This might take some time.`)) {
+					try {
+						// Show loading indicator
+						loading.style.display = 'block';
+						loading.textContent = `Indexing project "${project}"...`;
+						
+						const res = await fetch(`/index?project=${encodeURIComponent(project)}`, {
+							method: 'POST'
+						});
+						
+						if (!res.ok) {
+							const errorText = await res.text();
+							throw new Error(errorText);
+						}
+						
+						const data = await res.json();
+						alert(`Project "${project}" indexed successfully. ${data.document_count} documents indexed.`);
+						
+					} catch (error) {
+						alert(`Error indexing project: ${error.message}`);
+					} finally {
+						loading.style.display = 'none';
+						loading.textContent = 'Processing your query';
+					}
+				}
+			});
+		});
+		
+		// Function to toggle source visibility
+		function toggleSource(id) {
+			const source = document.getElementById(id);
+			const button = source.querySelector('.expand-button');
+			
+			if (source.classList.contains('expanded')) {
+				source.classList.remove('expanded');
+				button.textContent = 'Expand';
+			} else {
+				source.classList.add('expanded');
+				button.textContent = 'Collapse';
+			}
+		}
+	</script>
+	
+	<!-- Add Marked.js for Markdown parsing -->
+	<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</body>
+</html>

@@ -27,8 +27,14 @@ prompts/
 .env
 process_citations.py
 process_pdf.py
+install.sh
+diagnose.py
+debugging/
+sqlite-vec-test.py
+templates/index-working-backup.html
 
 # Logs and databases
+logs/*
 *.log
 *.sqlite
 
