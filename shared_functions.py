@@ -19,6 +19,26 @@ from typing import List, Dict, Tuple, Optional, Any, Union
 from datetime import datetime
 from pathlib import Path
 
+# Import colorama for terminal colors
+try:
+	from colorama import init, Fore, Style
+	# Initialize colorama
+	init(autoreset=True)
+	COLORS_AVAILABLE = True
+except ImportError:
+	print("For a colorful interface, install colorama: pip install colorama")
+	# Create dummy color constants
+	class DummyFore:
+		def __getattr__(self, name):
+			return ""
+	class DummyStyle:
+		def __getattr__(self, name):
+			return ""
+	Fore = DummyFore()
+	Style = DummyStyle()
+	COLORS_AVAILABLE = False
+
+
 import anthropic
 try:
 	from sklearn.metrics.pairwise import cosine_similarity
@@ -57,7 +77,7 @@ DEFAULT_EMBEDDING_TYPE = "sentence_transformers"
 TOP_K_DOCUMENTS = 3
 API_TIMEOUT = 180  # Timeout for API calls in seconds
 MASTER_PROJECT = "master"  # Name for the master index
-PROMPTS_DIR = "prompts"  # Directory to save prompt logs
+PROMPTS_DIR = "logs/prompts"  # Directory to save prompt logs
 DEFAULT_CHARS_PER_DIMENSION = 4
 
 # LLM types
@@ -69,6 +89,17 @@ LLM_HF = "hf"
 DEFAULT_LLM_TYPE = LLM_LOCAL
 DEFAULT_LOCAL_MODEL = "mistral-7b-instruct-v0"
 DEFAULT_HF_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
+
+# Color scheme
+QUERY_COLOR = Fore.GREEN
+ANSWER_COLOR = Fore.CYAN
+DEBUG_COLOR = Fore.YELLOW
+ERROR_COLOR = Fore.RED
+SYSTEM_COLOR = Fore.MAGENTA
+HIGHLIGHT_COLOR = Fore.WHITE + Style.BRIGHT
+RESET_COLOR = Style.RESET_ALL
+
 
 class APITimeoutError(Exception):
 	"""Exception raised when an API call times out."""
@@ -182,6 +213,49 @@ class EmbeddingProviderCache:
 def timeout_handler(signum, frame):
 	"""Signal handler for timeouts."""
 	raise APITimeoutError("API call timed out")
+	
+	
+def print_debug(message: str) -> None:
+		"""Print debug message in debug color."""
+		print(f"{DEBUG_COLOR}[DEBUG] {message}{RESET_COLOR}")
+	
+def print_error(message: str) -> None:
+	"""Print error message in error color."""
+	print(f"{ERROR_COLOR}Error: {message}{RESET_COLOR}")
+
+def print_system(message: str) -> None:
+	"""Print system message in system color."""
+	print(f"{SYSTEM_COLOR}{message}{RESET_COLOR}")
+
+
+def ensure_directory_structure(base_dir: str = None, create_dirs: List[str] = None) -> None:
+	"""
+	Ensure that the required directory structure exists, creating it if necessary.
+	
+	Args:
+		base_dir: Optional base directory (if None, uses current directory)
+		create_dirs: List of directories to create (if None, uses default structure)
+	"""
+	if base_dir is None:
+		base_dir = os.getcwd()
+	
+	# Default directory structure if not specified
+	if create_dirs is None:
+		create_dirs = [
+			"logs",
+			"logs/batch_results",
+			"logs/prompts",
+			"logs/history"
+		]
+	
+	for directory in create_dirs:
+		dir_path = os.path.join(base_dir, directory)
+		if not os.path.exists(dir_path):
+			try:
+				os.makedirs(dir_path, exist_ok=True)
+				print(f"Created directory: {dir_path}")
+			except Exception as e:
+				print(f"Error creating directory {dir_path}: {e}")
 
 def get_project_config_path(project: str, document_dir: str, use_legacy: bool = False) -> str:
 	"""
@@ -1846,3 +1920,160 @@ def is_command(text: str) -> bool:
 		"exit", "quit", "llm ", "models"
 	]
 	return any(text.lower() == cmd or text.lower().startswith(cmd) for cmd in command_prefixes)
+	
+	
+	
+	
+	
+
+
+
+def batch_process(query: str, models: List[str], relevant_docs: List[Document], 
+			  api_key: str, project: str, llm_types: Dict[str, str], 
+			  debug: bool = False, prompts_dir: str = PROMPTS_DIR,
+			  rag_mode: str = "chunk", document_dir: str = DEFAULT_DOCUMENT_DIR,
+			  system_prompt: str = None, output_file: str = None) -> Dict:
+	"""
+	Process a single query with multiple models and RAG modes, returning all results.
+	
+	Args:
+		query: The query to process
+		models: List of model names to use
+		relevant_docs: List of relevant documents
+		api_key: API key for API-based models
+		project: Current project
+		llm_types: Dictionary mapping model names to LLM types
+		debug: Enable debug output
+		prompts_dir: Directory to save prompts
+		rag_mode: Default RAG mode (used only for tracking)
+		document_dir: Base document directory
+		system_prompt: System prompt to use
+		output_file: Output file for results (if None, will use default name)
+		
+	Returns:
+		Dictionary containing all results
+	"""
+	# Define the RAG modes to run for each model
+	rag_modes = ["none", "chunk", "file"]
+	
+	results = {
+		"query": query,
+		"timestamp": datetime.now().isoformat(),
+		"project": project,
+		"default_rag_mode": rag_mode,
+		"num_relevant_docs": len(relevant_docs),
+		"system_prompt": system_prompt,
+		"document_contexts": [],
+		"model_responses": []
+	}
+	
+	# Add document context information
+	for i, doc in enumerate(relevant_docs):
+		results["document_contexts"].append({
+			"index": i + 1,
+			"file_path": doc.metadata.get('file_path', 'Unknown'),
+			"project": doc.metadata.get('project', MASTER_PROJECT),
+			"chunk_index": doc.metadata.get('chunk_index', 0),
+			"total_chunks": doc.metadata.get('total_chunks', 0),
+			"embedding_model": doc.metadata.get('embedding_model', 'Unknown'),
+			"embedding_type": doc.metadata.get('embedding_type', 'Unknown'),
+			"content_length": len(doc.content),
+			"similarity": doc.metadata.get('similarity', 0),
+			"content_preview": doc.content[:100] + "..." if len(doc.content) > 100 else doc.content
+		})
+	
+	# Process each model with each RAG mode
+	for model in models:
+		if debug:
+			print_debug(f"Processing model: {model}")
+		
+		# Determine LLM type for this model
+		llm_type = llm_types.get(model, None)
+		if not llm_type:
+			# Try to auto-detect LLM type based on model name
+			if "claude" in model.lower():
+				llm_type = LLM_CLAUDE
+			elif any(x in model.lower() for x in ["gpt", "openai", "o3"]):
+				llm_type = LLM_OPENAI
+			elif any(x in model.lower() for x in ["llama", "mistral", "orca", "phi", "mlx", "qwen"]):
+				llm_type = LLM_LOCAL
+			else:
+				# Default to local (LLM) for unknown models
+				llm_type = LLM_LOCAL
+			
+			if debug:
+				print_debug(f"Auto-detected LLM type for {model}: {llm_type}")
+		
+		# Get API key based on LLM type
+		model_api_key = api_key
+		if llm_type == LLM_OPENAI and not model_api_key:
+			model_api_key = os.environ.get("OPENAI_API_KEY")
+			
+		# For each RAG mode, run the query
+		for mode in rag_modes:
+			# Process start time
+			start_time = time.time()
+			
+			# Get response from this model with this RAG mode
+			print_system(f"Generating answer with {llm_type}:{model} using RAG mode: {mode}...")
+			
+			try:
+				response = get_response(
+					query, relevant_docs, model_api_key, project,
+					llm_type, model, debug, prompts_dir,
+					mode, document_dir, system_prompt
+				)
+				
+				# Record processing time
+				processing_time = time.time() - start_time
+				
+				# Add to results
+				results["model_responses"].append({
+					"model": model,
+					"llm_type": llm_type,
+					"rag_mode": mode,
+					"processing_time_seconds": round(processing_time, 2),
+					"response": response
+				})
+				
+				# Print summary
+				print_system(f"Completed {model} with RAG mode '{mode}' in {processing_time:.2f} seconds")
+				
+			except Exception as e:
+				# Record error
+				if debug:
+					print_error(f"Error processing model {model} with RAG mode '{mode}': {e}")
+					print(traceback.format_exc())
+				
+				results["model_responses"].append({
+					"model": model,
+					"llm_type": llm_type,
+					"rag_mode": mode,
+					"error": str(e),
+					"response": f"Error: {str(e)}"
+				})
+	
+	# Save results to file
+	if output_file is None:
+		timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+		output_file = f"logs/batch_results/batch_results_{timestamp}.json"
+	
+	# Create directory if it doesn't exist
+	os.makedirs(os.path.dirname(output_file), exist_ok=True)
+	
+	with open(output_file, 'w') as f:
+		json.dump(results, f, indent=2)
+	
+	print_system(f"Batch results saved to: {output_file}")
+	
+	return results
+	
+# Function to read query from file
+def read_query_from_file(file_path: str) -> str:
+	"""Read query from a file."""
+	try:
+		with open(file_path, 'r') as f:
+			return f.read().strip()
+	except Exception as e:
+		print_error(f"Error reading query file: {e}")
+		sys.exit(1)

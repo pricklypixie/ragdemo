@@ -1062,6 +1062,7 @@ DEFAULT_INDEX_HTML = """<!DOCTYPE html>
 							<option value="orca-2-7b">orca-2-7b">orca-2-7b">orca-2-7b</option>
 							<option value="orca-2-13b">orca-2-13b">orca-2-13b">orca-2-13b</option>
 							<option value="DeepSeek-R1-Distill-Qwen-14B-Q4_0">DeepSeek-R1-Distill-Qwen-14B-Q4_0</option>
+							<option value="mlx-community/gemma-3-4b-it-bf16">mlx-community/gemma-3-4b-it-bf16</option>
 							<option value="mlx-community/OLMo-2-0325-32B-Instruct-4bit">OLMo-2-0325-32B-Instruct-4bit (requires llm-mlx)</option>
 						</optgroup>
 						<optgroup label="Hugging Face Models">

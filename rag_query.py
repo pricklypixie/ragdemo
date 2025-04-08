@@ -24,25 +24,8 @@ import atexit
 import pickle
 from typing import List, Dict, Optional, Any
 from pathlib import Path
+from datetime import datetime
 
-# Import colorama for terminal colors
-try:
-	from colorama import init, Fore, Style
-	# Initialize colorama
-	init(autoreset=True)
-	COLORS_AVAILABLE = True
-except ImportError:
-	print("For a colorful interface, install colorama: pip install colorama")
-	# Create dummy color constants
-	class DummyFore:
-		def __getattr__(self, name):
-			return ""
-	class DummyStyle:
-		def __getattr__(self, name):
-			return ""
-	Fore = DummyFore()
-	Style = DummyStyle()
-	COLORS_AVAILABLE = False
 
 # Import from our shared functions library
 from shared_functions import (
@@ -51,7 +34,7 @@ from shared_functions import (
 	DEFAULT_EMBEDDING_TYPE, TOP_K_DOCUMENTS, MASTER_PROJECT, PROMPTS_DIR,
 	DEFAULT_CHARS_PER_DIMENSION, LLM_CLAUDE, LLM_LOCAL, LLM_HF, LLM_OPENAI,
 	DEFAULT_LLM_TYPE, DEFAULT_LOCAL_MODEL, DEFAULT_HF_MODEL, DEFAULT_CLAUDE_MODEL,
-	DEFAULT_OPENAI_MODEL,
+	DEFAULT_OPENAI_MODEL, COLORS_AVAILABLE, HIGHLIGHT_COLOR, RESET_COLOR, QUERY_COLOR, SYSTEM_COLOR, ANSWER_COLOR,
 	
 	# Classes
 	Document, EmbeddingProviderCache,
@@ -60,7 +43,7 @@ from shared_functions import (
 	get_project_config_path, load_project_config_file, get_project_embedding_config,
 	load_index, discover_projects, clear_index, index_project, get_index_path,
 	save_embedding_config, is_command, get_model_name_for_llm_type,
-	search_documents, get_response, display_search_results
+	search_documents, get_response, display_search_results, batch_process, read_query_from_file, print_debug, print_system, print_error, ensure_directory_structure
 )
 
 # Import our embedding library
@@ -71,18 +54,18 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 os.environ["MPS_FALLBACK_POLICY"] = "0" 
 
 # Color scheme
-QUERY_COLOR = Fore.GREEN
-ANSWER_COLOR = Fore.CYAN
-DEBUG_COLOR = Fore.YELLOW
-ERROR_COLOR = Fore.RED
-SYSTEM_COLOR = Fore.MAGENTA
-HIGHLIGHT_COLOR = Fore.WHITE + Style.BRIGHT
-RESET_COLOR = Style.RESET_ALL
+# QUERY_COLOR = Fore.GREEN
+# ANSWER_COLOR = Fore.CYAN
+# DEBUG_COLOR = Fore.YELLOW
+# ERROR_COLOR = Fore.RED
+# SYSTEM_COLOR = Fore.MAGENTA
+# HIGHLIGHT_COLOR = Fore.WHITE + Style.BRIGHT
+# RESET_COLOR = Style.RESET_ALL
 
 class CommandHistory:
 	"""Manages command history for interactive mode."""
 	
-	def __init__(self, history_dir="history", max_size=1000):
+	def __init__(self, history_dir="logs/history", max_size=1000):
 		"""
 		Initialize command history manager.
 		
@@ -187,17 +170,17 @@ class CommandHistory:
 		"""Get the last n history entries."""
 		return self.entries[-n:] if n <= len(self.entries) else self.entries
 
-def print_debug(message: str) -> None:
-	"""Print debug message in debug color."""
-	print(f"{DEBUG_COLOR}[DEBUG] {message}{RESET_COLOR}")
-
-def print_error(message: str) -> None:
-	"""Print error message in error color."""
-	print(f"{ERROR_COLOR}Error: {message}{RESET_COLOR}")
-
-def print_system(message: str) -> None:
-	"""Print system message in system color."""
-	print(f"{SYSTEM_COLOR}{message}{RESET_COLOR}")
+# def print_debug(message: str) -> None:
+# 	"""Print debug message in debug color."""
+# 	print(f"{DEBUG_COLOR}[DEBUG] {message}{RESET_COLOR}")
+# 
+# def print_error(message: str) -> None:
+# 	"""Print error message in error color."""
+# 	print(f"{ERROR_COLOR}Error: {message}{RESET_COLOR}")
+# 
+# def print_system(message: str) -> None:
+# 	"""Print system message in system color."""
+# 	print(f"{SYSTEM_COLOR}{message}{RESET_COLOR}")
 
 def print_help_info(current_project: str, current_llm_type: str, current_model: str, 
 				   current_rag_mode: str, current_rag_count: int,
@@ -512,8 +495,8 @@ def interactive_mode(documents: List[Document], api_key: str, project: str,
 				print_debug(f"  system_prompt: \"{current_system_prompt}\"")
 	
 	# Initialize history
-	history = CommandHistory(history_dir=history_dir)
-	
+	history = CommandHistory(history_dir="logs/history" if history_dir == "history" else history_dir)	
+
 	# Initialize embedding provider cache
 	provider_cache = EmbeddingProviderCache(debug=debug)
 	
@@ -1278,8 +1261,22 @@ def main():
 	# for working with sqlite                    
 	parser.add_argument("--use-sqlite", action="store_true",
 						help="Use SQLite with vector search instead of pickle files")
+						
+	# for batch processing	
+	# In the argument parser section of main(), add these new arguments:
+	parser.add_argument("--batch-models", type=str,
+						help="Comma-separated list of models to run in batch mode")
+	parser.add_argument("--batch-output", type=str,
+						help="Output JSON file for batch results (default: batch_results_<timestamp>.json)")
+	parser.add_argument("--prompt-file", type=str,
+						help="File containing the prompt/query to use")
+
 
 	args = parser.parse_args()
+	
+	# Create required directory structure
+	ensure_directory_structure()
+
 	
 	# Update API key handling
 	api_key = args.api_key
@@ -1582,8 +1579,35 @@ def main():
 			print_debug("Source: Project configuration")
 		else:
 			print_debug("Source: Default value")
+			
+	# Handle prompt file
+	if args.prompt_file:
+		if args.query:
+			print_error("Cannot use both --query and --prompt-file")
+			sys.exit(1)
+		
+		if args.debug:
+			print_debug(f"Reading query from file: {args.prompt_file}")
+		
+		args.query = read_query_from_file(args.prompt_file)
+		print_system(f"Using query from file: {args.prompt_file}")
 	
-	# In the main function, for single query mode:
+	
+	# In the main() function, after loading documents and before the if args.query block:
+	
+	# Handle prompt file
+	if args.prompt_file:
+		if args.query:
+			print_error("Cannot use both --query and --prompt-file")
+			sys.exit(1)
+		
+		if args.debug:
+			print_debug(f"Reading query from file: {args.prompt_file}")
+		
+		args.query = read_query_from_file(args.prompt_file)
+		print_system(f"Using query from file: {args.prompt_file}")
+	
+	# Replace the if args.query block with this:
 	if args.query:
 		# Single query mode
 		# Echo the query
@@ -1619,35 +1643,61 @@ def main():
 				rag_mode, args.use_sqlite, args.index_dir
 			)
 		
-		# Check if we should use the model specified in command line args
-		model_name = args.model
-		if not model_name:
-			# If not provided, get from project config
-			if args.llm == LLM_CLAUDE:
-				model_name = rag_settings.get("llm_model", DEFAULT_CLAUDE_MODEL)
-			elif args.llm == LLM_OPENAI:
-				model_name = rag_settings.get("llm_model", DEFAULT_OPENAI_MODEL)
-			elif args.llm == LLM_LOCAL:
-				model_name = rag_settings.get("llm_model", DEFAULT_LOCAL_MODEL)
-			elif args.llm == LLM_HF:
-				model_name = rag_settings.get("llm_model", DEFAULT_HF_MODEL)
-			else:
-				model_name = get_model_name_for_llm_type(args.llm)
-		
-		# Get response from LLM
-		print_system(f"Generating answer with {args.llm}:{model_name} (RAG mode: {rag_mode})...")
-		
-		# Get response
-		answer = get_response(
-			args.query, relevant_docs, api_key, args.project,
-			args.llm, model_name, args.debug, prompts_dir,
-			rag_mode, args.document_dir, system_prompt
-		)
-		
-		# Print the answer
-		print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
-		print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
-		
+		# Check if batch mode is requested
+		if args.batch_models:
+			# Parse model list
+			models = [m.strip() for m in args.batch_models.split(',')]
+			if args.debug:
+				print_debug(f"Batch mode: processing {len(models)} models")
+				print_debug(f"Models: {', '.join(models)}")
+			
+			# Map model names to LLM types
+			llm_types = {}
+			
+			# Process in batch mode
+			batch_results = batch_process(
+				args.query, models, relevant_docs, api_key, args.project, llm_types,
+				args.debug, prompts_dir, rag_mode, args.document_dir, system_prompt,
+				args.batch_output
+			)
+			
+			# Print summary
+			print_system("\nBatch processing complete")
+			print_system(f"Models processed: {len(models)}")
+			print_system(f"Results saved to: {args.batch_output or batch_results.get('output_file', 'batch_results.json')}")
+			
+		else:
+			# Regular single-model processing
+			# Check if we should use the model specified in command line args
+			model_name = args.model
+			if not model_name:
+				# If not provided, get from project config
+				if args.llm == LLM_CLAUDE:
+					model_name = rag_settings.get("llm_model", DEFAULT_CLAUDE_MODEL)
+				elif args.llm == LLM_OPENAI:
+					model_name = rag_settings.get("llm_model", DEFAULT_OPENAI_MODEL)
+				elif args.llm == LLM_LOCAL:
+					model_name = rag_settings.get("llm_model", DEFAULT_LOCAL_MODEL)
+				elif args.llm == LLM_HF:
+					model_name = rag_settings.get("llm_model", DEFAULT_HF_MODEL)
+				else:
+					model_name = get_model_name_for_llm_type(args.llm)
+			
+			# Get response from LLM
+			print_system(f"Generating answer with {args.llm}:{model_name} (RAG mode: {rag_mode})...")
+			
+			# Get response
+			answer = get_response(
+				args.query, relevant_docs, api_key, args.project,
+				args.llm, model_name, args.debug, prompts_dir,
+				rag_mode, args.document_dir, system_prompt
+			)
+			
+			# Print the answer
+			print(f"\n{ANSWER_COLOR}Answer:{RESET_COLOR}")
+			print(f"{ANSWER_COLOR}{answer}{RESET_COLOR}")
+	
+	
 	else:
 		# Interactive mode
 		interactive_mode(
@@ -1656,6 +1706,7 @@ def main():
 			args.local_model, args.hf_model, args.model or DEFAULT_CLAUDE_MODEL,
 			args.history_dir, rag_count, args.system_prompt, args.use_sqlite
 		)
+
 
 if __name__ == "__main__":
 	main()
